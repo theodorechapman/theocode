@@ -128,8 +128,12 @@ async function syncProjectMcp(
       // No project config yet.
     }
     const wanted: Array<{ name: string; url: string | null }> = [
-      // First-party worktree tool: always available in theocode projects.
+      // First-party tools: always available in theocode projects.
       { name: "theocode-wt", url: `http://127.0.0.1:${proxy.port}/wt/${project.id}` },
+      {
+        name: "theocode-research",
+        url: `http://127.0.0.1:${proxy.port}/research/${project.id}`,
+      },
       ...MCP_PROVIDERS.map((providerId) => ({
         name: `theocode-${providerId}`,
         url: getCredentials(providerId)
@@ -160,9 +164,10 @@ export async function runAgentTurn(
   ref: SessionRef,
   prompt: string,
   sinks: TurnSinks,
+  opts?: { research?: boolean },
 ): Promise<void> {
   await syncProjectMcp(project, session.worktree?.path ?? project.path);
-  const invocation = buildAgentInvocation(project, session, prompt);
+  const invocation = buildAgentInvocation(project, session, prompt, opts);
   const child = spawn(grokBinary(), invocation.args, {
     cwd: invocation.cwd,
     env: process.env,

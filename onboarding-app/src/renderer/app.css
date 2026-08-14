@@ -634,3 +634,8 @@ body {
     animation: none;
   }
 }
+
+.tc-msg-research {
+  border-left: 2px solid var(--vbg-border-subtle);
+  padding-left: var(--vbg-space-3);
+}

@@ -9,17 +9,28 @@ import type { ProjectInfo, SessionMeta } from "./types";
 // (see turn.ts syncProjectMcp), and theocode appends its own rules to grok's
 // stock system prompt.
 
-/** Appended to grok's own system prompt via --rules. Theo writes this. */
-export function extraRules(): string {
+function readPrompt(file: string): string {
   try {
-    return readFileSync(
-      join(app.getAppPath(), "prompts", "system-prompt.md"),
-      "utf8",
-    ).trim();
+    return readFileSync(join(app.getAppPath(), "prompts", file), "utf8").trim();
   } catch {
     return "";
   }
 }
+
+/** Appended to grok's own system prompt via --rules. Theo writes this. */
+export function extraRules(): string {
+  return readPrompt("system-prompt.md");
+}
+
+/** Rules for research subagents: pure, read-only, question-scoped. */
+export function researchRules(): string {
+  return readPrompt("research-rules.md");
+}
+
+// Researchers are structurally read-only: no terminal, no edits, no
+// worktrees, no subagents. search_tool/use_tool stay, so read-only MCP
+// surfaces remain reachable.
+export const RESEARCH_TOOLS = "read_file,grep,list_dir,web_search,web_fetch";
 
 export interface AgentInvocation {
   command: string;
@@ -36,6 +47,7 @@ export function buildAgentInvocation(
   project: ProjectInfo,
   session: SessionMeta,
   prompt: string,
+  opts?: { research?: boolean },
 ): AgentInvocation {
   const sessionArgs = session.grokSessionId
     ? ["--resume", session.grokSessionId]
@@ -52,7 +64,8 @@ export function buildAgentInvocation(
     "-p",
     prompt,
   ];
-  const rules = extraRules();
+  if (opts?.research) args.push("--tools", RESEARCH_TOOLS);
+  const rules = opts?.research ? researchRules() : extraRules();
   if (rules) args.push("--rules", rules);
   return { command: "grok", args, cwd };
 }

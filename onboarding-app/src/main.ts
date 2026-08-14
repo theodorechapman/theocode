@@ -28,6 +28,15 @@ import {
   updateSessionMeta,
 } from "./theocode/sessions";
 import { createWorktree } from "./theocode/worktree";
+import {
+  MAX_QUESTION_CHARS,
+  newResearchTask,
+  pendingFor,
+  reportFromEvents,
+  researcherPrompt,
+  researchTasks,
+  resultText,
+} from "./theocode/research";
 import { getProject, updateProject } from "./theocode/sessions";
 import { detectStack, installSetupSkill, runProjectSetup } from "./theocode/setup";
 import { runAgentTurn, type TurnSinks } from "./theocode/turn";
@@ -107,7 +116,73 @@ async function startProxyAndSync(): Promise<void> {
   proxy = await startProxy({
     localSecret: proxySecret,
     routes: PROXY_ROUTES,
-    createWorktree: handleCreateWorktree,
+    localServers: {
+      wt: {
+        serverName: "theocode-wt",
+        tools: [
+          {
+            name: "theocode-wt",
+            description:
+              "Create a fresh, non-conflicting git worktree (wt-N) for this project with its own reserved port block, and continue your work inside it. Commit your current work first.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                branch: {
+                  type: "string",
+                  description: "Branch name for the worktree. Defaults to wt-N.",
+                },
+              },
+            },
+          },
+        ],
+        call: (projectId, _name, args) =>
+          handleCreateWorktree(
+            projectId,
+            typeof args.branch === "string" ? args.branch : undefined,
+          ),
+      },
+      research: {
+        serverName: "theocode-research",
+        tools: [
+          {
+            name: "theocode-research",
+            description:
+              "Spawn a research subagent to answer one question. The question is delivered to the researcher verbatim and alone — put your hypotheses and context in `hypothesis`, which the researcher NEVER sees (it is echoed back to you with the report). Returns immediately; poll with theocode-research-poll, or the report interrupts you after your turn ends.",
+            inputSchema: {
+              type: "object",
+              required: ["question"],
+              properties: {
+                question: {
+                  type: "string",
+                  description: `The research question, stated plainly. Max ${MAX_QUESTION_CHARS} characters — no background, no hypotheses.`,
+                },
+                hypothesis: {
+                  type: "string",
+                  description:
+                    "Optional: your guesses, context, and why you ask. Held back from the researcher to keep the exploration pure.",
+                },
+              },
+            },
+          },
+          {
+            name: "theocode-research-poll",
+            description:
+              "Check a research task. Returns the report when it is finished, or its running status.",
+            inputSchema: {
+              type: "object",
+              required: ["id"],
+              properties: {
+                id: { type: "string", description: "The research id." },
+              },
+            },
+          },
+        ],
+        call: (projectId, name, args) =>
+          name === "theocode-research"
+            ? handleResearchStart(projectId, args)
+            : Promise.resolve(handleResearchPoll(projectId, args)),
+      },
+    },
     getCredentials: (providerId) => {
       const creds = getCredentials(providerId as ProviderId);
       if (!creds) return null;
@@ -275,38 +350,149 @@ function turnSinks(extra?: Partial<TurnSinks>): TurnSinks {
   };
 }
 
+// research sub-turn key -> research task id, so onTurnFinished can finalize.
+const researchTurnKeys = new Map<string, string>();
+
+/** Starts a turn unless the session is busy. Returns whether it started. */
+function startTurn(
+  ref: SessionRef,
+  prompt: string,
+  opts?: { research?: boolean },
+): boolean {
+  const key = turnKey(ref);
+  if (turnsInFlight.has(key)) return false;
+  const project = getProject(ref.projectId);
+  const session = readSession(ref);
+  if (!project || !session) return false;
+  turnsInFlight.add(key);
+  void runAgentTurn(
+    project,
+    session,
+    ref,
+    prompt,
+    turnSinks({
+      onDone: (code) => {
+        turnsInFlight.delete(key);
+        onTurnFinished(ref, code);
+      },
+    }),
+    { research: opts?.research },
+  ).catch((err) => {
+    console.error("turn failed:", err);
+    turnsInFlight.delete(key);
+  });
+  return true;
+}
+
+function onTurnFinished(ref: SessionRef, code: number | null): void {
+  const taskId = researchTurnKeys.get(turnKey(ref));
+  if (taskId) {
+    researchTurnKeys.delete(turnKey(ref));
+    finalizeResearch(taskId, code);
+    return;
+  }
+  deliverPendingResearch(ref);
+}
+
+function finalizeResearch(taskId: string, code: number | null): void {
+  const task = researchTasks.get(taskId);
+  if (!task) return;
+  task.report = reportFromEvents(readEvents(task.subRef)) ?? undefined;
+  task.status = code === 0 ? "done" : "failed";
+  if (task.parentRef) deliverPendingResearch(task.parentRef);
+}
+
+/** The interrupt: once the parent is idle, unclaimed reports start a turn. */
+function deliverPendingResearch(parentRef: SessionRef): void {
+  if (turnsInFlight.has(turnKey(parentRef))) return;
+  const pending = pendingFor(parentRef);
+  if (pending.length === 0) return;
+  const text = pending.map(resultText).join("\n\n---\n\n");
+  for (const task of pending) task.claimed = true;
+  const event = appendEvent(parentRef, { type: "research_result", text });
+  win?.webContents.send("workspace:event", { ref: parentRef, event });
+  if (!startTurn(parentRef, text)) {
+    for (const task of pending) task.claimed = false;
+  }
+}
+
+async function handleResearchStart(
+  projectId: string,
+  args: Record<string, unknown>,
+): Promise<string> {
+  const question = String(args.question ?? "").trim();
+  const hypothesis =
+    typeof args.hypothesis === "string" && args.hypothesis.trim()
+      ? args.hypothesis.trim()
+      : undefined;
+  if (!question) throw new Error("Provide a research question.");
+  if (question.length > MAX_QUESTION_CHARS) {
+    throw new Error(
+      `Question too long (${question.length} > ${MAX_QUESTION_CHARS} chars). State only the question; move your context and guesses into the hypothesis field — the researcher never sees it.`,
+    );
+  }
+  const project = getProject(projectId);
+  if (!project) throw new Error(`Unknown project: ${projectId}`);
+
+  const parentRef = activeTurnRef(projectId);
+  const sub = createSession(
+    project.id,
+    parentRef?.sessionId,
+    question.length > 60 ? `${question.slice(0, 57)}…` : question,
+  );
+  const subRef: SessionRef = parentRef
+    ? { projectId: project.id, sessionId: parentRef.sessionId, subagentId: sub.id }
+    : { projectId: project.id, sessionId: sub.id };
+
+  const task = newResearchTask(parentRef, subRef, question, hypothesis);
+  const prompt = researcherPrompt(question);
+  const event = appendEvent(subRef, { type: "user_message", text: prompt });
+  win?.webContents.send("workspace:event", { ref: subRef, event });
+  win?.webContents.send("workspace:tree-changed");
+  researchTurnKeys.set(turnKey(subRef), task.id);
+  if (!startTurn(subRef, prompt, { research: true })) {
+    researchTurnKeys.delete(turnKey(subRef));
+    throw new Error("Could not start the researcher");
+  }
+  return [
+    `Research ${task.id} started: "${question}".`,
+    `The researcher sees only that question${hypothesis ? "; your hypothesis stays with me and comes back with the report" : ""}.`,
+    `Keep working. Poll with theocode-research-poll {"id":"${task.id}"} if you want the result mid-turn; otherwise it will interrupt you once your turn ends.`,
+  ].join(" ");
+}
+
+function handleResearchPoll(
+  projectId: string,
+  args: Record<string, unknown>,
+): string {
+  const id = String(args.id ?? "");
+  const task = researchTasks.get(id);
+  if (!task || task.subRef.projectId !== projectId) {
+    throw new Error(`Unknown research id: ${id}`);
+  }
+  if (task.status === "running") {
+    return `Research ${id} is still running. Keep working and poll again later, or finish your turn and it will interrupt you.`;
+  }
+  task.claimed = true;
+  return resultText(task);
+}
+
 ipcMain.handle(
   "workspace:send",
   (_event, ref: SessionRef, text: string) => {
     const event = appendEvent(ref, { type: "user_message", text });
     win?.webContents.send("workspace:event", { ref, event });
 
-    const key = turnKey(ref);
-    const project = getProject(ref.projectId);
-    const session = readSession(ref);
-    if (ref.subagentId || !project || !session) {
-      // Subagent sessions are driven by their parent turn; only store here.
-      return readEvents(ref);
+    // Subagent sessions are driven by theocode; only store there.
+    if (!ref.subagentId && !startTurn(ref, text)) {
+      if (turnsInFlight.has(turnKey(ref))) {
+        const notice = appendEvent(ref, {
+          type: "notice",
+          text: "A turn is already running. The message was stored but not sent to the agent.",
+        });
+        win?.webContents.send("workspace:event", { ref, event: notice });
+      }
     }
-    if (turnsInFlight.has(key)) {
-      const notice = appendEvent(ref, {
-        type: "notice",
-        text: "A turn is already running. The message was stored but not sent to the agent.",
-      });
-      win?.webContents.send("workspace:event", { ref, event: notice });
-      return readEvents(ref);
-    }
-    turnsInFlight.add(key);
-    void runAgentTurn(
-      project,
-      session,
-      ref,
-      text,
-      turnSinks({ onDone: () => turnsInFlight.delete(key) }),
-    ).catch((err) => {
-      console.error("turn failed:", err);
-      turnsInFlight.delete(key);
-    });
     return readEvents(ref);
   },
 );
@@ -330,7 +516,12 @@ ipcMain.handle(
     const ref = runProjectSetup(
       project,
       answers,
-      turnSinks({ onDone: () => turnsInFlight.delete(key) }),
+      turnSinks({
+        onDone: (code) => {
+          turnsInFlight.delete(key);
+          onTurnFinished(ref, code);
+        },
+      }),
     );
     key = turnKey(ref);
     turnsInFlight.add(key);
@@ -370,19 +561,9 @@ function runDemoTurn(): void {
     projectId: node.project.id,
     sessionId: sessionNode.session.id,
   };
-  const session = readSession(ref);
-  if (!session) return;
-  const key = turnKey(ref);
-  turnsInFlight.add(key);
   const event = appendEvent(ref, { type: "user_message", text: "Demo turn." });
   win?.webContents.send("workspace:event", { ref, event });
-  void runAgentTurn(
-    node.project,
-    session,
-    ref,
-    "Demo turn.",
-    turnSinks({ onDone: () => turnsInFlight.delete(key) }),
-  ).catch((err) => console.error("demo turn failed:", err));
+  startTurn(ref, "Demo turn.");
 }
 
 app.whenReady().then(async () => {

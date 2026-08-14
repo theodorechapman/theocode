@@ -20,17 +20,32 @@ export interface ProxyCredentials {
   resource: string;
 }
 
+export interface LocalMcpTool {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+/** A first-party MCP server mounted at /<route>/<projectId>. */
+export interface LocalMcpServer {
+  serverName: string;
+  tools: LocalMcpTool[];
+  /** Returns the tool result text; throws with a user-facing message. */
+  call(
+    projectId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<string>;
+}
+
 export interface ProxyDeps {
   localSecret: string;
   /** route name (e.g. "supabase") -> provider id used for credential lookup. */
   routes: Record<string, string>;
   getCredentials(providerId: string): ProxyCredentials | null;
   saveTokens(providerId: string, tokens: TokenSet): void;
-  /**
-   * First-party worktree tool, mounted as an MCP server at /wt/<projectId>.
-   * Returns the human-readable tool result; throws with a user-facing message.
-   */
-  createWorktree?(projectId: string, branch?: string): Promise<string>;
+  /** route prefix (e.g. "wt") -> first-party MCP server. */
+  localServers?: Record<string, LocalMcpServer>;
 }
 
 export interface RunningProxy {
@@ -80,27 +95,12 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
   });
 }
 
-// ---- First-party MCP server for the theocode-wt tool -----------------------
+// ---- First-party MCP servers (theocode-wt, theocode-research, …) -----------
 // A minimal streamable-HTTP MCP endpoint: single JSON-RPC messages via POST,
-// plain application/json responses (no SSE needed for one short-lived tool).
+// plain application/json responses (no SSE needed for short-lived tools).
 
-const WT_TOOL = {
-  name: "theocode-wt",
-  description:
-    "Create a fresh, non-conflicting git worktree (wt-N) for this project with its own reserved port block, and continue your work inside it. Commit your current work first.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      branch: {
-        type: "string",
-        description: "Branch name for the worktree. Defaults to wt-N.",
-      },
-    },
-  },
-};
-
-async function handleWtRequest(
-  deps: ProxyDeps,
+async function handleLocalMcp(
+  server: LocalMcpServer,
   projectId: string,
   req: IncomingMessage,
   res: ServerResponse,
@@ -132,18 +132,18 @@ async function handleWtRequest(
       reply({
         protocolVersion: params?.protocolVersion ?? "2025-03-26",
         capabilities: { tools: {} },
-        serverInfo: { name: "theocode-wt", version: "0.1.0" },
+        serverInfo: { name: server.serverName, version: "0.1.0" },
       });
       return;
     }
     case "tools/list":
-      reply({ tools: [WT_TOOL] });
+      reply({ tools: server.tools });
       return;
     case "tools/call": {
       const params = message.params as
-        | { name?: string; arguments?: { branch?: string } }
+        | { name?: string; arguments?: Record<string, unknown> }
         | undefined;
-      if (params?.name !== WT_TOOL.name || !deps.createWorktree) {
+      if (!params?.name || !server.tools.some((t) => t.name === params.name)) {
         json(res, 200, {
           jsonrpc: "2.0",
           id,
@@ -152,9 +152,10 @@ async function handleWtRequest(
         return;
       }
       try {
-        const text = await deps.createWorktree(
+        const text = await server.call(
           projectId,
-          params.arguments?.branch,
+          params.name,
+          params.arguments ?? {},
         );
         reply({ content: [{ type: "text", text }], isError: false });
       } catch (err) {
@@ -219,10 +220,14 @@ export function createProxy(deps: ProxyDeps) {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const route = url.pathname.replace(/^\/+|\/+$/g, "");
 
-    if (route.startsWith("wt/")) {
-      const body = await readBody(req);
-      await handleWtRequest(deps, route.slice(3), req, res, body);
-      return;
+    const slash = route.indexOf("/");
+    if (slash > 0 && deps.localServers) {
+      const server = deps.localServers[route.slice(0, slash)];
+      if (server) {
+        const body = await readBody(req);
+        await handleLocalMcp(server, route.slice(slash + 1), req, res, body);
+        return;
+      }
     }
 
     const providerId = deps.routes[route];

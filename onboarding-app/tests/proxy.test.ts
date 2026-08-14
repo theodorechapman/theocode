@@ -65,9 +65,29 @@ beforeAll(async () => {
         creds.accessToken = tokens.access_token;
         creds.refreshToken = tokens.refresh_token;
       },
-      createWorktree: async (projectId, branch) => {
-        if (projectId === "bad") throw new Error("not a git repo");
-        return `Worktree wt-1 created for ${projectId} (branch ${branch ?? "wt-1"}).`;
+      localServers: {
+        wt: {
+          serverName: "theocode-wt",
+          tools: [
+            { name: "theocode-wt", description: "worktree", inputSchema: { type: "object" } },
+          ],
+          call: async (projectId, _name, args) => {
+            if (projectId === "bad") throw new Error("not a git repo");
+            const branch = typeof args.branch === "string" ? args.branch : "wt-1";
+            return `Worktree wt-1 created for ${projectId} (branch ${branch}).`;
+          },
+        },
+        research: {
+          serverName: "theocode-research",
+          tools: [
+            { name: "theocode-research", description: "research", inputSchema: { type: "object" } },
+            { name: "theocode-research-poll", description: "poll", inputSchema: { type: "object" } },
+          ],
+          call: async (_projectId, name, args) =>
+            name === "theocode-research"
+              ? `Research r1 started: "${String(args.question)}".`
+              : "Research r1 is still running.",
+        },
       },
     },
     0,
@@ -189,4 +209,24 @@ test("wt tool errors surface as isError results, not crashes", async () => {
   };
   expect(body.result.isError).toBe(true);
   expect(body.result.content[0].text).toContain("not a git repo");
+});
+
+test("research endpoint routes tools by name", async () => {
+  const start = await rpc("/research/p1", {
+    jsonrpc: "2.0",
+    id: 5,
+    method: "tools/call",
+    params: { name: "theocode-research", arguments: { question: "why is the sky blue" } },
+  });
+  const startBody = (await start.json()) as { result: { content: Array<{ text: string }> } };
+  expect(startBody.result.content[0].text).toContain("why is the sky blue");
+
+  const poll = await rpc("/research/p1", {
+    jsonrpc: "2.0",
+    id: 6,
+    method: "tools/call",
+    params: { name: "theocode-research-poll", arguments: { id: "r1" } },
+  });
+  const pollBody = (await poll.json()) as { result: { content: Array<{ text: string }> } };
+  expect(pollBody.result.content[0].text).toContain("still running");
 });

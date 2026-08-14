@@ -146,6 +146,14 @@ export function eventBlock(event: SessionEvent, animate: boolean): HTMLElement {
     }
     case "notice":
       return metaLine(String(rest.text ?? ""), animate);
+    case "research_result": {
+      const block = fade(h("article", "tc-msg tc-msg-research"), animate);
+      block.append(
+        h("p", "tc-msg-label", "Research report"),
+        ...richParagraphs(String(rest.text ?? ""), false),
+      );
+      return block;
+    }
     case "turn_error":
     case "setup_error": {
       const block = fade(h("article", "tc-msg tc-msg-error"), animate);

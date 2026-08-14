@@ -41,6 +41,19 @@ projects/<projectId>/sessions/<sessionId>/subagents/<subId>/{session.json, event
 index.db
 ```
 
+## Research subagents
+
+`theocode-research` (an MCP tool on the proxy, per-project like `theocode-wt`)
+spawns a pure research subagent. The parent supplies a short `question`
+(hard-capped at 400 chars, delivered to the researcher verbatim and alone) and
+an optional `hypothesis` that the researcher NEVER sees — theocode holds it and
+echoes it back with the report, keeping the exploration uncontaminated.
+Researchers run read-only (`--tools read_file,grep,list_dir,web_search,web_fetch`)
+under `prompts/research-rules.md` in a nested subagent session. The spawn
+returns immediately: the parent can poll mid-turn (`theocode-research-poll`),
+and once its turn ends, unclaimed reports are delivered as an interrupt turn
+(`research_result` event + a new parent turn carrying the report).
+
 ## Agent
 
 `src/theocode/agent.ts` builds the headless grok invocation for a turn:
