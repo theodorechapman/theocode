@@ -110,6 +110,23 @@ function renderTabs(): void {
     });
     tab.title = project.path;
     if (project.id === activeProjectId) tab.setAttribute("aria-current", "true");
+    // Two-finger click: native context menu with "Close project".
+    tab.addEventListener("contextmenu", async (e) => {
+      e.preventDefault();
+      const closed = await api.projectMenu(project.id);
+      if (!closed) return;
+      tree = await api.getTree();
+      if (activeProjectId === project.id) {
+        activeProjectId = tree.projects[0]?.project.id ?? null;
+        const next = tree.projects[0]?.sessions[0]?.session;
+        await select(
+          next ? { projectId: next.projectId, sessionId: next.id } : null,
+        );
+      } else {
+        renderTabs();
+        renderTree();
+      }
+    });
     return tab;
   });
   const add = button("tc-tab tc-tab-add", "+", () => void createProjectFlow());

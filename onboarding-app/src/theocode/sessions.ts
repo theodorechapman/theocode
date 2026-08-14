@@ -171,7 +171,7 @@ export function getTree(): WorkspaceTree {
     const project = readJson<ProjectInfo>(
       join(projectDir(projectId), "project.json"),
     );
-    if (!project) continue;
+    if (!project || project.closedAt) continue;
     const sessions = listDirs(join(projectDir(projectId), "sessions"))
       .map((sessionId) => readSessionNode(projectId, sessionId))
       .filter((node): node is SessionNode => node !== null)

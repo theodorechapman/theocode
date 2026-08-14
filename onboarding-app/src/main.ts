@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -294,6 +294,39 @@ ipcMain.handle(
 ipcMain.handle("workspace:interrupt", (_event, ref: SessionRef) => {
   turnsInFlight.get(turnKey(ref))?.interrupt();
 });
+
+// Native (macOS) context menu for a project tab. Resolves true if the
+// project was closed; closing archives it (closedAt) — data stays on disk.
+ipcMain.handle(
+  "workspace:projectMenu",
+  (_event, projectId: string): Promise<boolean> => {
+    const project = getProject(projectId);
+    if (!project) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      let closed = false;
+      const menu = Menu.buildFromTemplate([
+        {
+          label: `Close “${project.name}”`,
+          click: () => {
+            updateProject(projectId, { closedAt: new Date().toISOString() });
+            closed = true;
+          },
+        },
+        { type: "separator" },
+        {
+          label: "Reveal in Finder",
+          click: () => void shell.openPath(project.path),
+        },
+      ]);
+      menu.popup({
+        window: win ?? undefined,
+        // Item click handlers can fire after the close callback; defer so
+        // `closed` is settled before we resolve.
+        callback: () => setImmediate(() => resolve(closed)),
+      });
+    });
+  },
+);
 
 // Fallback for List blocks whose tool result carried no listing text.
 ipcMain.handle("workspace:listDir", (_event, path: string): string[] => {

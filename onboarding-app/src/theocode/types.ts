@@ -6,6 +6,8 @@ export interface ProjectInfo {
   createdAt: string;
   /** Set once the setup prompt has been shown, so it never re-prompts. */
   setupPromptedAt?: string;
+  /** Closed projects keep their data but leave the workspace tree. */
+  closedAt?: string;
 }
 
 /** Cheap filesystem detection used to seed the setup prompt. */
@@ -91,6 +93,9 @@ export interface WorkspaceApi {
   /** Directory entries ("name/" for dirs, dirs first), for List fallback
    *  when the tool result carried no listing text. */
   listDirectory(path: string): Promise<string[]>;
+  /** Native context menu for a project tab; resolves true if it closed
+   *  the project. */
+  projectMenu(projectId: string): Promise<boolean>;
   onEvent(cb: (update: { ref: SessionRef; event: SessionEvent }) => void): void;
   onPartial(
     cb: (update: { ref: SessionRef; partial: TurnPartial | null }) => void,

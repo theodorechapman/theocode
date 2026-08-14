@@ -18,6 +18,13 @@ body {
 
 /* --- Top bar: identity + project tabs + "+" ------------------------------ */
 
+/* Chrome is not copy — no text selection on the top bar or sidebar. */
+.tc-topbar,
+.tc-sidebar {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .tc-topbar {
   grid-column: 1 / -1;
   display: flex;
