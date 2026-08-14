@@ -180,7 +180,11 @@ body {
   border-left: 1px solid var(--vbg-border-subtle);
 }
 
+/* Badges (wt-N, subagent) sit at the row's right edge and never shrink or
+   truncate — the title is what gives way. */
 .tc-tree-badge {
+  flex: none;
+  white-space: nowrap;
   font-size: var(--vbg-type-metadata);
   color: var(--vbg-text-secondary);
 }
