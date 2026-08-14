@@ -26,6 +26,8 @@ import {
   getTree,
   readEvents,
   readSession,
+  titleFromPrompt,
+  updateSessionMeta,
 } from "./theocode/sessions";
 import { getProject, updateProject } from "./theocode/sessions";
 import { detectStack, installSetupSkill, runProjectSetup } from "./theocode/setup";
@@ -263,6 +265,8 @@ ipcMain.handle(
   (_event, ref: SessionRef, text: string) => {
     const event = appendEvent(ref, { type: "user_message", text });
     win?.webContents.send("workspace:event", { ref, event });
+    // Sessions are titled by their latest prompt (grok never names them).
+    updateSessionMeta(ref, { title: titleFromPrompt(text) });
 
     const key = turnKey(ref);
     const project = getProject(ref.projectId);

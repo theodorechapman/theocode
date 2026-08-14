@@ -358,6 +358,13 @@ function renderPane(): void {
     if (!text || !selected) return;
     input.value = "";
     await api.sendMessage(selected, text);
+    // The session takes its title from the latest prompt — refresh the
+    // sidebar and patch the header in place (no pane rebuild mid-turn).
+    tree = await api.getTree();
+    renderTree();
+    const title = findMeta(selected).session?.title;
+    const titleEl = paneEl.querySelector(".tc-pane-title");
+    if (title && titleEl) titleEl.textContent = title;
   });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {

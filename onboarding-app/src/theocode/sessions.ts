@@ -47,6 +47,16 @@ function listDirs(path: string): string[] {
   }
 }
 
+const DEFAULT_TITLE = "New session";
+
+/** Session title from a prompt: its first line, clipped. grok emits no
+ *  session-title records, so titles are derived from the latest prompt. */
+export function titleFromPrompt(text: string): string {
+  const line = text.trim().split("\n")[0].replace(/\s+/g, " ").trim();
+  if (!line) return DEFAULT_TITLE;
+  return line.length > 48 ? `${line.slice(0, 47).trimEnd()}…` : line;
+}
+
 export function createProject(path: string): ProjectInfo {
   const project: ProjectInfo = {
     id: randomUUID(),
@@ -150,16 +160,33 @@ export function appendEvent(
   return event;
 }
 
+/** Untitled sessions pick up the start of their latest prompt, lazily,
+ *  when the tree is read (covers sessions from before titling existed). */
+function backfillTitle(ref: SessionRef, meta: SessionMeta): SessionMeta {
+  if (meta.title !== DEFAULT_TITLE) return meta;
+  const lastPrompt = readEvents(ref)
+    .filter((e) => e.type === "user_message" && typeof e.text === "string")
+    .at(-1);
+  if (!lastPrompt) return meta;
+  const title = titleFromPrompt(String(lastPrompt.text));
+  if (title === DEFAULT_TITLE) return meta;
+  return updateSessionMeta(ref, { title }) ?? meta;
+}
+
 function readSessionNode(projectId: string, sessionId: string): SessionNode | null {
   const dir = sessionDir(projectId, sessionId);
-  const session = readJson<SessionMeta>(join(dir, "session.json"));
+  let session = readJson<SessionMeta>(join(dir, "session.json"));
   if (!session) return null;
+  session = backfillTitle({ projectId, sessionId }, session);
   const subagents = listDirs(join(dir, "subagents"))
-    .map((subId) =>
-      readJson<SessionMeta>(
+    .map((subId) => {
+      const meta = readJson<SessionMeta>(
         join(sessionDir(projectId, sessionId, subId), "session.json"),
-      ),
-    )
+      );
+      return meta
+        ? backfillTitle({ projectId, sessionId, subagentId: subId }, meta)
+        : null;
+    })
     .filter((meta): meta is SessionMeta => meta !== null)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   return { session, subagents };
