@@ -26,6 +26,11 @@ export interface ProxyDeps {
   routes: Record<string, string>;
   getCredentials(providerId: string): ProxyCredentials | null;
   saveTokens(providerId: string, tokens: TokenSet): void;
+  /**
+   * First-party worktree tool, mounted as an MCP server at /wt/<projectId>.
+   * Returns the human-readable tool result; throws with a user-facing message.
+   */
+  createWorktree?(projectId: string, branch?: string): Promise<string>;
 }
 
 export interface RunningProxy {
@@ -75,6 +80,108 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
   });
 }
 
+// ---- First-party MCP server for the theocode-wt tool -----------------------
+// A minimal streamable-HTTP MCP endpoint: single JSON-RPC messages via POST,
+// plain application/json responses (no SSE needed for one short-lived tool).
+
+const WT_TOOL = {
+  name: "theocode-wt",
+  description:
+    "Create a fresh, non-conflicting git worktree (wt-N) for this project with its own reserved port block, and continue your work inside it. Commit your current work first.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      branch: {
+        type: "string",
+        description: "Branch name for the worktree. Defaults to wt-N.",
+      },
+    },
+  },
+};
+
+async function handleWtRequest(
+  deps: ProxyDeps,
+  projectId: string,
+  req: IncomingMessage,
+  res: ServerResponse,
+  body: Buffer,
+): Promise<void> {
+  if (req.method !== "POST") {
+    res.writeHead(405).end();
+    return;
+  }
+  let message: Record<string, unknown>;
+  try {
+    message = JSON.parse(body.toString());
+  } catch {
+    json(res, 400, { error: "invalid JSON" });
+    return;
+  }
+  const id = message.id;
+  if (id === undefined || id === null) {
+    // Notification (e.g. notifications/initialized) — acknowledge silently.
+    res.writeHead(202).end();
+    return;
+  }
+  const reply = (result: unknown) =>
+    json(res, 200, { jsonrpc: "2.0", id, result });
+
+  switch (message.method) {
+    case "initialize": {
+      const params = message.params as { protocolVersion?: string } | undefined;
+      reply({
+        protocolVersion: params?.protocolVersion ?? "2025-03-26",
+        capabilities: { tools: {} },
+        serverInfo: { name: "theocode-wt", version: "0.1.0" },
+      });
+      return;
+    }
+    case "tools/list":
+      reply({ tools: [WT_TOOL] });
+      return;
+    case "tools/call": {
+      const params = message.params as
+        | { name?: string; arguments?: { branch?: string } }
+        | undefined;
+      if (params?.name !== WT_TOOL.name || !deps.createWorktree) {
+        json(res, 200, {
+          jsonrpc: "2.0",
+          id,
+          error: { code: -32602, message: `unknown tool: ${params?.name}` },
+        });
+        return;
+      }
+      try {
+        const text = await deps.createWorktree(
+          projectId,
+          params.arguments?.branch,
+        );
+        reply({ content: [{ type: "text", text }], isError: false });
+      } catch (err) {
+        reply({
+          content: [
+            {
+              type: "text",
+              text: err instanceof Error ? err.message : String(err),
+            },
+          ],
+          isError: true,
+        });
+      }
+      return;
+    }
+    case "ping":
+      reply({});
+      return;
+    default:
+      json(res, 200, {
+        jsonrpc: "2.0",
+        id,
+        error: { code: -32601, message: `method not found: ${message.method}` },
+      });
+  }
+}
+
 export function createProxy(deps: ProxyDeps) {
   // Single-flight refresh per provider so parallel 401s trigger one refresh.
   const refreshing = new Map<string, Promise<string>>();
@@ -111,6 +218,13 @@ export function createProxy(deps: ProxyDeps) {
 
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const route = url.pathname.replace(/^\/+|\/+$/g, "");
+
+    if (route.startsWith("wt/")) {
+      const body = await readBody(req);
+      await handleWtRequest(deps, route.slice(3), req, res, body);
+      return;
+    }
+
     const providerId = deps.routes[route];
     if (!providerId) {
       json(res, 404, { error: `unknown route: /${route}` });

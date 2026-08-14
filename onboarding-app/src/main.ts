@@ -25,7 +25,9 @@ import {
   getTree,
   readEvents,
   readSession,
+  updateSessionMeta,
 } from "./theocode/sessions";
+import { createWorktree } from "./theocode/worktree";
 import { getProject, updateProject } from "./theocode/sessions";
 import { detectStack, installSetupSkill, runProjectSetup } from "./theocode/setup";
 import { runAgentTurn, type TurnSinks } from "./theocode/turn";
@@ -68,11 +70,44 @@ function loadProxySecret(): string {
   return secret;
 }
 
+/** The agent session currently running a turn for this project, if any. */
+function activeTurnRef(projectId: string): SessionRef | null {
+  for (const key of turnsInFlight) {
+    const [p, s, sub] = key.split("/");
+    if (p === projectId && !sub) return { projectId: p, sessionId: s };
+  }
+  return null;
+}
+
+async function handleCreateWorktree(
+  projectId: string,
+  branch?: string,
+): Promise<string> {
+  const project = getProject(projectId);
+  if (!project) throw new Error(`Unknown project: ${projectId}`);
+  const info = createWorktree(project.path, branch);
+  // Bind the worktree to the session whose turn invoked the tool, so the
+  // sidebar can label it wt-N.
+  const ref = activeTurnRef(projectId);
+  if (ref) {
+    updateSessionMeta(ref, {
+      worktree: { n: info.n, branch: info.branch, path: info.path },
+    });
+    win?.webContents.send("workspace:tree-changed");
+  }
+  return [
+    `Worktree wt-${info.n} created at ${info.path} (branch ${info.branch}).`,
+    `Do ALL further work for this task inside ${info.path}: run every command there (cd ${info.path}) and edit files under that directory only.`,
+    `Reserved ports for this worktree (also written to .env.ports): PORT/APP_PORT=${info.ports.app}, SUPABASE_API_PORT=${info.ports.supabaseApi}, SUPABASE_DB_PORT=${info.ports.supabaseDb}, SUPABASE_STUDIO_PORT=${info.ports.supabaseStudio}. Use them for any dev servers or local stacks so parallel worktrees never collide.`,
+  ].join("\n");
+}
+
 async function startProxyAndSync(): Promise<void> {
   proxySecret = loadProxySecret();
   proxy = await startProxy({
     localSecret: proxySecret,
     routes: PROXY_ROUTES,
+    createWorktree: handleCreateWorktree,
     getCredentials: (providerId) => {
       const creds = getCredentials(providerId as ProviderId);
       if (!creds) return null;

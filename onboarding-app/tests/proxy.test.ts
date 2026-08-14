@@ -65,6 +65,10 @@ beforeAll(async () => {
         creds.accessToken = tokens.access_token;
         creds.refreshToken = tokens.refresh_token;
       },
+      createWorktree: async (projectId, branch) => {
+        if (projectId === "bad") throw new Error("not a git repo");
+        return `Worktree wt-1 created for ${projectId} (branch ${branch ?? "wt-1"}).`;
+      },
     },
     0,
   );
@@ -123,4 +127,66 @@ test("forwards directly once the token is fresh", async () => {
   expect(res.status).toBe(200);
   const after = upstreamRequests.filter((r) => r.path === "/token").length;
   expect(after).toBe(before);
+});
+
+function rpc(path: string, body: unknown, secret = SECRET) {
+  return fetch(`http://127.0.0.1:${proxy.port}${path}`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${secret}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+test("wt endpoint requires the local secret", async () => {
+  const res = await rpc("/wt/p1", { jsonrpc: "2.0", id: 1, method: "tools/list" }, "wrong");
+  expect(res.status).toBe(401);
+});
+
+test("wt endpoint speaks MCP: initialize, tools/list, tools/call", async () => {
+  const init = await rpc("/wt/p1", {
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "t", version: "0" } },
+  });
+  expect(init.status).toBe(200);
+  const initBody = (await init.json()) as { result: { serverInfo: { name: string } } };
+  expect(initBody.result.serverInfo.name).toBe("theocode-wt");
+
+  const notify = await rpc("/wt/p1", { jsonrpc: "2.0", method: "notifications/initialized" });
+  expect(notify.status).toBe(202);
+
+  const list = await rpc("/wt/p1", { jsonrpc: "2.0", id: 2, method: "tools/list" });
+  const listBody = (await list.json()) as { result: { tools: Array<{ name: string }> } };
+  expect(listBody.result.tools[0].name).toBe("theocode-wt");
+
+  const call = await rpc("/wt/p1", {
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "theocode-wt", arguments: { branch: "feature-x" } },
+  });
+  const callBody = (await call.json()) as {
+    result: { isError: boolean; content: Array<{ text: string }> };
+  };
+  expect(callBody.result.isError).toBe(false);
+  expect(callBody.result.content[0].text).toContain("wt-1");
+  expect(callBody.result.content[0].text).toContain("feature-x");
+});
+
+test("wt tool errors surface as isError results, not crashes", async () => {
+  const call = await rpc("/wt/bad", {
+    jsonrpc: "2.0",
+    id: 4,
+    method: "tools/call",
+    params: { name: "theocode-wt", arguments: {} },
+  });
+  const body = (await call.json()) as {
+    result: { isError: boolean; content: Array<{ text: string }> };
+  };
+  expect(body.result.isError).toBe(true);
+  expect(body.result.content[0].text).toContain("not a git repo");
 });

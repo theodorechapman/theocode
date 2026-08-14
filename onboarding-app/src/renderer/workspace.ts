@@ -65,6 +65,9 @@ function sessionRow(
   if (sameRef(selected, ref)) row.setAttribute("aria-current", "true");
   row.append(
     h("span", "tc-tree-title", meta.title),
+    ...(meta.worktree
+      ? [h("span", "tc-tree-badge", `wt-${meta.worktree.n}`)]
+      : []),
     ...(kind === "subagent" ? [h("span", "tc-tree-badge", "subagent")] : []),
   );
   return row;
@@ -262,6 +265,11 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
     }
     transcriptEl.insertBefore(eventBlock(event, animate), partialView.el);
     if (pin) scrollToBottom();
+  });
+
+  api.onTreeChanged(async () => {
+    tree = await api.getTree();
+    renderTree();
   });
 
   api.onPartial(({ ref, partial }) => {

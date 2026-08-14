@@ -70,9 +70,10 @@ function ensureGrokDirIgnored(projectPath: string): void {
  * ones are removed. Project scope (not user scope) so the MCP surface exists
  * only inside theocode projects, not in every grok session on the machine.
  */
-async function syncProjectMcp(projectPath: string): Promise<void> {
+async function syncProjectMcp(project: ProjectInfo): Promise<void> {
   const proxy = getActiveProxy();
   if (!proxy) return;
+  const projectPath = project.path;
   try {
     ensureFolderTrusted(projectPath);
     ensureGrokDirIgnored(projectPath);
@@ -84,11 +85,19 @@ async function syncProjectMcp(projectPath: string): Promise<void> {
     } catch {
       // No project config yet.
     }
-    for (const providerId of MCP_PROVIDERS) {
-      const name = `theocode-${providerId}`;
+    const wanted: Array<{ name: string; url: string | null }> = [
+      // First-party worktree tool: always available in theocode projects.
+      { name: "theocode-wt", url: `http://127.0.0.1:${proxy.port}/wt/${project.id}` },
+      ...MCP_PROVIDERS.map((providerId) => ({
+        name: `theocode-${providerId}`,
+        url: getCredentials(providerId)
+          ? `http://127.0.0.1:${proxy.port}/${providerId}`
+          : null,
+      })),
+    ];
+    for (const { name, url } of wanted) {
       const registered = config.includes(`[mcp_servers.${name}]`);
-      if (getCredentials(providerId)) {
-        const url = `http://127.0.0.1:${proxy.port}/${providerId}`;
+      if (url) {
         const current =
           registered && config.includes(url) && config.includes(proxy.secret);
         if (!current) {
@@ -110,7 +119,7 @@ export async function runAgentTurn(
   prompt: string,
   sinks: TurnSinks,
 ): Promise<void> {
-  await syncProjectMcp(project.path);
+  await syncProjectMcp(project);
   const invocation = buildAgentInvocation(project, session, prompt);
   const child = spawn(grokBinary(), invocation.args, {
     cwd: invocation.cwd,

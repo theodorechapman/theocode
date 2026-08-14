@@ -27,6 +27,9 @@ const workspace: WorkspaceApi = {
   onPartial: (cb) => {
     ipcRenderer.on("workspace:partial", (_event, update) => cb(update));
   },
+  onTreeChanged: (cb) => {
+    ipcRenderer.on("workspace:tree-changed", () => cb());
+  },
   getSetupInfo: (projectId: string) =>
     ipcRenderer.invoke("workspace:setupInfo", projectId),
   runSetup: (projectId: string, answers: SetupAnswers) =>
