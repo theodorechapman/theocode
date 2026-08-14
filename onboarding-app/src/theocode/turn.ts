@@ -1,5 +1,15 @@
 import { spawn } from "node:child_process";
-import { grokBinary } from "../grok";
+import { appendFileSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import {
+  ensureFolderTrusted,
+  grokBinary,
+  registerProxyInProject,
+  unregisterProxyFromProject,
+} from "../grok";
+import { getActiveProxy } from "../proxy";
+import { getCredentials } from "../store";
+import { MCP_PROVIDERS } from "../providers";
 import { buildAgentInvocation } from "./agent";
 import { appendEvent, updateSessionMeta } from "./sessions";
 import type {
@@ -39,13 +49,68 @@ interface ToolState {
 
 const PARTIAL_THROTTLE_MS = 80;
 
-export function runAgentTurn(
+/** The registered .grok/config.toml carries the proxy secret — never commit it. */
+function ensureGrokDirIgnored(projectPath: string): void {
+  const path = join(projectPath, ".gitignore");
+  let content = "";
+  try {
+    content = readFileSync(path, "utf8");
+  } catch {
+    // No .gitignore yet — create one.
+  }
+  if (content.split("\n").some((l) => l.trim().replace(/\/$/, "") === ".grok")) {
+    return;
+  }
+  appendFileSync(path, `${content.endsWith("\n") || !content ? "" : "\n"}.grok/\n`);
+}
+
+/**
+ * Keeps the project's .grok/config.toml in step with what is connected in
+ * theocode: connected providers point at the loopback proxy, disconnected
+ * ones are removed. Project scope (not user scope) so the MCP surface exists
+ * only inside theocode projects, not in every grok session on the machine.
+ */
+async function syncProjectMcp(projectPath: string): Promise<void> {
+  const proxy = getActiveProxy();
+  if (!proxy) return;
+  try {
+    ensureFolderTrusted(projectPath);
+    ensureGrokDirIgnored(projectPath);
+    // Shelling out to `grok mcp` costs seconds; read the config first and
+    // only exec when the desired state differs.
+    let config = "";
+    try {
+      config = readFileSync(join(projectPath, ".grok", "config.toml"), "utf8");
+    } catch {
+      // No project config yet.
+    }
+    for (const providerId of MCP_PROVIDERS) {
+      const name = `theocode-${providerId}`;
+      const registered = config.includes(`[mcp_servers.${name}]`);
+      if (getCredentials(providerId)) {
+        const url = `http://127.0.0.1:${proxy.port}/${providerId}`;
+        const current =
+          registered && config.includes(url) && config.includes(proxy.secret);
+        if (!current) {
+          await registerProxyInProject(projectPath, name, url, proxy.secret);
+        }
+      } else if (registered) {
+        await unregisterProxyFromProject(projectPath, name);
+      }
+    }
+  } catch (err) {
+    console.error("project MCP sync failed:", err);
+  }
+}
+
+export async function runAgentTurn(
   project: ProjectInfo,
   session: SessionMeta,
   ref: SessionRef,
   prompt: string,
   sinks: TurnSinks,
-): void {
+): Promise<void> {
+  await syncProjectMcp(project.path);
   const invocation = buildAgentInvocation(project, session, prompt);
   const child = spawn(grokBinary(), invocation.args, {
     cwd: invocation.cwd,

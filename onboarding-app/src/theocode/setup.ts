@@ -77,6 +77,8 @@ export function runProjectSetup(
   const ref: SessionRef = { projectId: project.id, sessionId: session.id };
   const prompt = setupPrompt(answers, detection);
   sinks.onEvent(ref, appendEvent(ref, { type: "user_message", text: prompt }));
-  runAgentTurn(project, session, ref, prompt, sinks);
+  void runAgentTurn(project, session, ref, prompt, sinks).catch((err) =>
+    console.error("setup turn failed:", err),
+  );
   return ref;
 }

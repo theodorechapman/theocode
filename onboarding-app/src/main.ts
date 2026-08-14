@@ -6,9 +6,8 @@ import { runOAuthFlow } from "./oauth";
 import { getProvider, GROK_CLIENT_ID, GROK_ISSUER } from "./providers";
 import {
   readGrokCliAuth,
-  registerProxyWithGrok,
   removeGrokCliAuth,
-  unregisterProxyFromGrok,
+  unregisterProxyFromUserScope,
   writeGrokCliAuth,
 } from "./grok";
 import { setActiveProxy, startProxy, type RunningProxy } from "./proxy";
@@ -69,27 +68,6 @@ function loadProxySecret(): string {
   return secret;
 }
 
-function grokMcpName(route: string): string {
-  return `theocode-${route}`;
-}
-
-async function syncGrokRegistration(route: string): Promise<void> {
-  const providerId = PROXY_ROUTES[route];
-  try {
-    if (proxy && getCredentials(providerId)) {
-      await registerProxyWithGrok(
-        grokMcpName(route),
-        `http://127.0.0.1:${proxy.port}/${route}`,
-        proxySecret,
-      );
-    } else {
-      await unregisterProxyFromGrok(grokMcpName(route));
-    }
-  } catch (err) {
-    console.error(`grok MCP registration for ${route} failed:`, err);
-  }
-}
-
 async function startProxyAndSync(): Promise<void> {
   proxySecret = loadProxySecret();
   proxy = await startProxy({
@@ -111,7 +89,13 @@ async function startProxyAndSync(): Promise<void> {
       updateTokens(providerId as ProviderId, tokens),
   });
   setActiveProxy(proxy.port, proxySecret);
-  await Promise.all(Object.keys(PROXY_ROUTES).map(syncGrokRegistration));
+  // Registration is now per-project (turn.ts syncProjectMcp); drop any
+  // user-scope entries left behind by earlier versions.
+  await Promise.all(
+    Object.keys(PROXY_ROUTES).map((route) =>
+      unregisterProxyFromUserScope(`theocode-${route}`),
+    ),
+  );
 }
 
 function createWindow(): void {
@@ -202,7 +186,6 @@ ipcMain.handle(
           tokenEndpoint: outcome.client.tokenEndpoint,
           resource: outcome.resource ?? "",
         });
-        await syncGrokRegistration(providerId);
       }
       return { ok: true, connection };
     } catch (err) {
@@ -218,7 +201,6 @@ ipcMain.handle("connections:disconnect", async (_event, providerId: ProviderId) 
     removeGrokCliAuth(GROK_ISSUER, GROK_CLIENT_ID);
   } else {
     removeConnection(providerId);
-    await syncGrokRegistration(providerId);
   }
 });
 
@@ -280,13 +262,16 @@ ipcMain.handle(
       return readEvents(ref);
     }
     turnsInFlight.add(key);
-    runAgentTurn(
+    void runAgentTurn(
       project,
       session,
       ref,
       text,
       turnSinks({ onDone: () => turnsInFlight.delete(key) }),
-    );
+    ).catch((err) => {
+      console.error("turn failed:", err);
+      turnsInFlight.delete(key);
+    });
     return readEvents(ref);
   },
 );
@@ -356,13 +341,13 @@ function runDemoTurn(): void {
   turnsInFlight.add(key);
   const event = appendEvent(ref, { type: "user_message", text: "Demo turn." });
   win?.webContents.send("workspace:event", { ref, event });
-  runAgentTurn(
+  void runAgentTurn(
     node.project,
     session,
     ref,
     "Demo turn.",
     turnSinks({ onDone: () => turnsInFlight.delete(key) }),
-  );
+  ).catch((err) => console.error("demo turn failed:", err));
 }
 
 app.whenReady().then(async () => {

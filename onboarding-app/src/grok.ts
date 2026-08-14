@@ -103,33 +103,72 @@ export function grokBinary(): string {
 }
 
 /**
- * Registers a theocode proxy route as an MCP server in the grok CLI's user
- * config (`grok mcp add` is add-or-update, so re-running after a port change
- * rewrites the URL).
+ * Registers a theocode proxy route as an MCP server in a PROJECT's
+ * .grok/config.toml (`grok mcp add` is add-or-update, so re-running after a
+ * port change rewrites the URL). Project scope keeps the surface
+ * compartmentalized: only grok sessions running in that directory see it.
  */
-export async function registerProxyWithGrok(
+export async function registerProxyInProject(
+  projectPath: string,
   name: string,
   url: string,
   localSecret: string,
 ): Promise<void> {
-  await execFileAsync(grokBinary(), [
-    "mcp",
-    "add",
-    name,
-    url,
-    "--transport",
-    "http",
-    "--scope",
-    "user",
-    "--header",
-    `Authorization: Bearer ${localSecret}`,
-  ]);
+  await execFileAsync(
+    grokBinary(),
+    [
+      "mcp",
+      "add",
+      name,
+      url,
+      "--transport",
+      "http",
+      "--scope",
+      "project",
+      "--header",
+      `Authorization: Bearer ${localSecret}`,
+    ],
+    { cwd: projectPath },
+  );
 }
 
-export async function unregisterProxyFromGrok(name: string): Promise<void> {
+export async function unregisterProxyFromProject(
+  projectPath: string,
+  name: string,
+): Promise<void> {
+  try {
+    await execFileAsync(
+      grokBinary(),
+      ["mcp", "remove", name, "--scope", "project"],
+      { cwd: projectPath },
+    );
+  } catch {
+    // Not registered — nothing to remove.
+  }
+}
+
+/** One-time migration: drop the user-scope (global) registrations. */
+export async function unregisterProxyFromUserScope(name: string): Promise<void> {
   try {
     await execFileAsync(grokBinary(), ["mcp", "remove", name, "--scope", "user"]);
   } catch {
     // Not registered — nothing to remove.
   }
+}
+
+/**
+ * grok only starts repo-local (project-scope) MCP servers in trusted folders;
+ * mark theocode projects trusted in the CLI's trust store.
+ */
+export function ensureFolderTrusted(path: string): void {
+  const trustPath = join(GROK_DIR, "trusted_folders.toml");
+  let content = "";
+  try {
+    content = readFileSync(trustPath, "utf8");
+  } catch {
+    // Missing file — create below.
+  }
+  if (content.includes(`[folders."${path}"]`)) return;
+  const entry = `\n[folders."${path}"]\ntrusted = true\ndecided_at = ${Math.floor(Date.now() / 1000)}\n`;
+  writeFileSync(trustPath, content + entry, { mode: 0o600 });
 }

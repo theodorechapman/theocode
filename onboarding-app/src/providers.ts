@@ -36,6 +36,9 @@ export const PROVIDERS: ProviderConfig[] = [
   },
 ];
 
+/** Providers exposed to the grok CLI through the loopback MCP proxy. */
+export const MCP_PROVIDERS = ["supabase", "vercel"] as const;
+
 export function getProvider(id: string): ProviderConfig {
   const provider = PROVIDERS.find((p) => p.id === id);
   if (!provider) throw new Error(`Unknown provider: ${id}`);
