@@ -59,6 +59,22 @@ export function createProject(path: string): ProjectInfo {
   return project;
 }
 
+export function getProject(projectId: string): ProjectInfo | null {
+  return readJson<ProjectInfo>(join(projectDir(projectId), "project.json"));
+}
+
+export function updateProject(
+  projectId: string,
+  patch: Partial<ProjectInfo>,
+): ProjectInfo | null {
+  const project = getProject(projectId);
+  if (!project) return null;
+  const updated = { ...project, ...patch };
+  writeJson(join(projectDir(projectId), "project.json"), updated);
+  mirror.projectSaved(updated);
+  return updated;
+}
+
 export function createSession(
   projectId: string,
   parentSessionId?: string,

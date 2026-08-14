@@ -4,6 +4,21 @@ export interface ProjectInfo {
   /** Absolute path of the working directory the agent operates in. */
   path: string;
   createdAt: string;
+  /** Set once the setup prompt has been shown, so it never re-prompts. */
+  setupPromptedAt?: string;
+}
+
+/** Cheap filesystem detection used to seed the setup prompt. */
+export interface SetupDetection {
+  /** The directory already had files when the project was added. */
+  existing: boolean;
+  vercel: boolean;
+  supabase: boolean;
+}
+
+export interface SetupAnswers {
+  vercel: boolean;
+  supabase: boolean;
 }
 
 export interface SessionMeta {
@@ -58,4 +73,10 @@ export interface WorkspaceApi {
   /** Appends a user message record; the agent turn itself is not wired yet. */
   sendMessage(ref: SessionRef, text: string): Promise<SessionEvent[]>;
   onEvent(cb: (update: { ref: SessionRef; event: SessionEvent }) => void): void;
+  /** Filesystem detection for the setup prompt. */
+  getSetupInfo(projectId: string): Promise<SetupDetection>;
+  /** Starts the setup agent run; resolves with the new session's ref. */
+  runSetup(projectId: string, answers: SetupAnswers): Promise<SessionRef>;
+  /** Marks the setup prompt as shown (also implied by runSetup). */
+  setupSeen(projectId: string): Promise<void>;
 }

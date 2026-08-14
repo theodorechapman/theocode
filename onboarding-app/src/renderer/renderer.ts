@@ -21,3 +21,4 @@ document
 
 void initWorkspace(workspaceView);
 void initConnections(connectionsView, showWorkspace);
+

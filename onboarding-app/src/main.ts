@@ -26,8 +26,10 @@ import {
   getTree,
   readEvents,
 } from "./theocode/sessions";
+import { getProject, updateProject } from "./theocode/sessions";
+import { detectStack, installSetupSkill, runProjectSetup } from "./theocode/setup";
 import { flushDb } from "./theocode/db";
-import type { SessionRef } from "./theocode/types";
+import type { SessionRef, SetupAnswers } from "./theocode/types";
 import type { ConnectionInfo, ConnectResult, ProviderId } from "./types";
 
 // scripts/dev.mjs assigns each dev instance its own suffix (and port block) so
@@ -247,6 +249,31 @@ ipcMain.handle(
   },
 );
 
+function requireProject(projectId: string) {
+  const project = getProject(projectId);
+  if (!project) throw new Error(`Unknown project: ${projectId}`);
+  return project;
+}
+
+ipcMain.handle("workspace:setupInfo", (_event, projectId: string) =>
+  detectStack(requireProject(projectId).path),
+);
+
+ipcMain.handle(
+  "workspace:runSetup",
+  (_event, projectId: string, answers: SetupAnswers): SessionRef => {
+    const project = requireProject(projectId);
+    updateProject(projectId, { setupPromptedAt: new Date().toISOString() });
+    return runProjectSetup(project, answers, (ref, event) =>
+      win?.webContents.send("workspace:event", { ref, event }),
+    );
+  },
+);
+
+ipcMain.handle("workspace:setupSeen", (_event, projectId: string) => {
+  updateProject(projectId, { setupPromptedAt: new Date().toISOString() });
+});
+
 // THEOCODE_DEMO=1 (with THEOCODE_HOME pointed somewhere disposable) seeds a
 // tree so the sidebar and subagent nesting can be exercised without an agent.
 function seedDemo(): void {
@@ -266,6 +293,7 @@ function seedDemo(): void {
 
 app.whenReady().then(async () => {
   if (process.env.THEOCODE_DEMO === "1") seedDemo();
+  installSetupSkill();
   createWindow();
   await startProxyAndSync();
 });

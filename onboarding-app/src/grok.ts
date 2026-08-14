@@ -95,7 +95,7 @@ export function removeGrokCliAuth(issuer: string, clientId: string): void {
   writeAuthFile(data);
 }
 
-function grokBinary(): string {
+export function grokBinary(): string {
   const installed = join(GROK_DIR, "bin", "grok");
   return existsSync(installed) ? installed : "grok";
 }

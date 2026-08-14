@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { OnboardingApi, ProviderId } from "./types";
-import type { SessionRef, WorkspaceApi } from "./theocode/types";
+import type { SessionRef, SetupAnswers, WorkspaceApi } from "./theocode/types";
 
 const onboarding: OnboardingApi = {
   getConnections: () => ipcRenderer.invoke("connections:get"),
@@ -24,6 +24,12 @@ const workspace: WorkspaceApi = {
   onEvent: (cb) => {
     ipcRenderer.on("workspace:event", (_event, update) => cb(update));
   },
+  getSetupInfo: (projectId: string) =>
+    ipcRenderer.invoke("workspace:setupInfo", projectId),
+  runSetup: (projectId: string, answers: SetupAnswers) =>
+    ipcRenderer.invoke("workspace:runSetup", projectId, answers),
+  setupSeen: (projectId: string) =>
+    ipcRenderer.invoke("workspace:setupSeen", projectId),
 };
 
 contextBridge.exposeInMainWorld("onboarding", onboarding);

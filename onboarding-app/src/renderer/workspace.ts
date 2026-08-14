@@ -1,4 +1,5 @@
 import { button, h } from "./dom";
+import { showSetupDialog } from "./setup";
 import type {
   SessionEvent,
   SessionMeta,
@@ -221,6 +222,13 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
     if (!project) return;
     tree = await api.getTree();
     renderTree();
+    if (!project.setupPromptedAt) {
+      const detection = await api.getSetupInfo(project.id);
+      showSetupDialog(api, project, detection, async (ref) => {
+        tree = await api.getTree();
+        await select(ref);
+      });
+    }
   });
 
   api.onEvent(({ ref, event }) => {
