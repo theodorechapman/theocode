@@ -76,11 +76,9 @@ export function showSetupDialog(
       finished = true;
       const [vercel, supabase] = rows.map((r) => r.answer === true);
       close();
-      if (vercel || supabase) {
-        onStarted(await api.runSetup(project.id, { vercel, supabase }));
-      } else {
-        await api.setupSeen(project.id);
-      }
+      // Even with both answered no, setup still runs: it installs the
+      // worktree script and repo hygiene every project needs.
+      onStarted(await api.runSetup(project.id, { vercel, supabase }));
     }
   }
 

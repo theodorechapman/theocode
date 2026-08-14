@@ -3,7 +3,12 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { childrenOf, createWorktree, removeWorktree } from "../src/theocode/worktree";
+import {
+  childrenOf,
+  createWorktree,
+  removeWorktree,
+  setWorktreeScriptSource,
+} from "../src/theocode/worktree";
 
 let repo: string;
 let locks: string;
@@ -13,6 +18,7 @@ beforeAll(() => {
   const home = mkdtempSync(join(tmpdir(), "tc-wt-home-"));
   locks = join(home, "port-locks");
   process.env.THEOCODE_HOME = home;
+  setWorktreeScriptSource(join(import.meta.dir, "..", "resources", "worktree.sh"));
   execFileSync("git", ["-C", repo, "init", "-q"]);
   writeFileSync(join(repo, "readme.md"), "hi\n");
   execFileSync("git", ["-C", repo, "add", "-A"]);

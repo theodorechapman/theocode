@@ -185,6 +185,12 @@ async function createProjectFlow(): Promise<void> {
   await select(null);
   if (!project.setupPromptedAt) {
     const detection = await api.getSetupInfo(project.id);
+    if (detection.alreadySetUp) {
+      // The project carries its own setup marker (.theocode/setup.json):
+      // never re-prompt, just record that we saw it.
+      void api.setupSeen(project.id);
+      return;
+    }
     showSetupDialog(api, project, detection, async (ref) => {
       tree = await api.getTree();
       await select(ref);

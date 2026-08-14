@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
   ensureFolderTrusted,
@@ -12,6 +12,7 @@ import { getCredentials } from "../store";
 import { MCP_PROVIDERS } from "../providers";
 import { buildAgentInvocation } from "./agent";
 import { appendEvent, updateSessionMeta } from "./sessions";
+import { ensureWorktreeScript } from "./worktree";
 import type {
   ProjectInfo,
   SessionEvent,
@@ -54,8 +55,9 @@ interface ToolState {
 
 const PARTIAL_THROTTLE_MS = 80;
 
-/** The registered .grok/config.toml carries the proxy secret — never commit it. */
-function ensureGrokDirIgnored(projectPath: string): void {
+/** .grok/ carries the proxy secret and .theocode/ is per-machine state —
+ *  neither belongs in the repo. */
+function ensureLocalDirsIgnored(projectPath: string): void {
   const path = join(projectPath, ".gitignore");
   let content = "";
   try {
@@ -63,10 +65,14 @@ function ensureGrokDirIgnored(projectPath: string): void {
   } catch {
     // No .gitignore yet — create one.
   }
-  if (content.split("\n").some((l) => l.trim().replace(/\/$/, "") === ".grok")) {
-    return;
+  for (const entry of [".grok/", ".theocode/"]) {
+    const bare = entry.replace(/\/$/, "");
+    if (content.split("\n").some((l) => l.trim().replace(/\/$/, "") === bare)) {
+      continue;
+    }
+    content = `${content.endsWith("\n") || !content ? content : content + "\n"}${entry}\n`;
   }
-  appendFileSync(path, `${content.endsWith("\n") || !content ? "" : "\n"}.grok/\n`);
+  writeFileSync(path, content);
 }
 
 /**
@@ -124,7 +130,14 @@ async function syncProjectMcp(
   try {
     ensureFolderTrusted(projectPath);
     if (projectPath === project.path) {
-      ensureGrokDirIgnored(projectPath);
+      ensureLocalDirsIgnored(projectPath);
+      // The canonical worktree script lives in every project; refreshing it
+      // here keeps terminal use and the theocode-wt tool identical.
+      try {
+        ensureWorktreeScript(projectPath);
+      } catch {
+        // No shipped copy configured (tests) — the tool ensures it on use.
+      }
     } else {
       ensureGrokDirExcluded(projectPath);
     }

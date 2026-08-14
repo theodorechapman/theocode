@@ -43,6 +43,7 @@ export function detectStack(projectPath: string): SetupDetection {
   }
   return {
     existing,
+    alreadySetUp: has(".theocode", "setup.json"),
     vercel: has(".vercel", "project.json") || has("vercel.json"),
     supabase: has("supabase", "config.toml"),
   };
@@ -59,7 +60,9 @@ function setupPrompt(answers: SetupAnswers, detection: SetupDetection): string {
     `- Supabase selected: ${yn(answers.supabase)}`,
     `- detection: vercel config present: ${yn(detection.vercel)}; supabase config present: ${yn(detection.supabase)}`,
     "",
-    "Work autonomously; never ask questions. Finish with the exact summary structure the skill specifies.",
+    answers.vercel || answers.supabase
+      ? "Work autonomously; never ask questions. Finish with the exact summary structure the skill specifies."
+      : "Neither Vercel nor Supabase was selected: perform ONLY the skill's 'Always' section (git repo, worktree script, gitignore), then finish with the summary.",
   ].join("\n");
 }
 

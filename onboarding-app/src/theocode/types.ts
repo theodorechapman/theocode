@@ -18,6 +18,8 @@ export interface ProjectInfo {
 export interface SetupDetection {
   /** The directory already had files when the project was added. */
   existing: boolean;
+  /** <project>/.theocode/setup.json exists — setup already ran; no prompt. */
+  alreadySetUp: boolean;
   vercel: boolean;
   supabase: boolean;
 }

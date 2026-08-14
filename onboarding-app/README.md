@@ -56,6 +56,13 @@ and once its turn ends, unclaimed reports are delivered as an interrupt turn
 
 ## Coding subagents
 
+Worktree logic is canonical in `resources/worktree.sh`: theocode installs it
+into every project as `scripts/worktree.sh` (refreshed before each turn) and
+the `theocode-wt` tool executes that same script, so terminal use, the setup
+skill, and in-app use can never drift. Projects carry a durable setup marker
+(`.theocode/setup.json`, gitignored): once set up, adding the project never
+re-prompts, and a both-no answer still runs a script-only setup pass.
+
 `theocode-code` fans out one coding subagent per task card, each in its own
 child worktree (wt-N.M) branched from the coordinator's worktree. Cards are
 self-contained contracts (goal, spec, files_in_scope, done_criteria) enforced

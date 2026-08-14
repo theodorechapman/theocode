@@ -28,7 +28,12 @@ import {
   titleFromPrompt,
   updateSessionMeta,
 } from "./theocode/sessions";
-import { childrenOf, createWorktree, removeWorktree } from "./theocode/worktree";
+import {
+  childrenOf,
+  createWorktree,
+  removeWorktree,
+  setWorktreeScriptSource,
+} from "./theocode/worktree";
 import {
   codeResultText,
   codeTasks,
@@ -266,11 +271,12 @@ async function startProxyAndSync(): Promise<void> {
             },
           },
         ],
-        call: (projectId, name, args) =>
+        call: (projectId, name, args, caller) =>
           name === "theocode-wt"
             ? handleCreateWorktree(
                 projectId,
                 typeof args.branch === "string" ? args.branch : undefined,
+                caller,
               )
             : handleRemoveWorktree(
                 projectId,
@@ -959,6 +965,17 @@ ipcMain.handle(
   (_event, projectId: string, answers: SetupAnswers): SessionRef => {
     const project = requireProject(projectId);
     updateProject(projectId, { setupPromptedAt: new Date().toISOString() });
+    // The durable "this project is set up" boolean lives in the project
+    // itself, so re-adding the project never re-prompts.
+    try {
+      mkdirSync(join(project.path, ".theocode"), { recursive: true });
+      writeFileSync(
+        join(project.path, ".theocode", "setup.json"),
+        JSON.stringify({ setUp: true, answers, at: new Date().toISOString() }, null, 2) + "\n",
+      );
+    } catch (err) {
+      console.error("could not write setup marker:", err);
+    }
     let key = "";
     const { ref, handle } = runProjectSetup(
       project,
@@ -1055,6 +1072,7 @@ function runDemoTurn(): void {
 }
 
 app.whenReady().then(async () => {
+  setWorktreeScriptSource(join(app.getAppPath(), "resources", "worktree.sh"));
   if (process.env.THEOCODE_DEMO === "1") seedDemo();
   if (process.env.THEOCODE_DEMO_ACTIVE === "1") seedDemoActiveTurns();
   installSetupSkill();
