@@ -1,4 +1,4 @@
-/* theocode setup — fixed-viewport layout, no page scrolling.
+/* theocode — fixed-viewport workspace: sidebar tree + session pane.
    Page-owned classes only; colors, type, and spacing come from public tokens. */
 
 html,
@@ -8,20 +8,25 @@ body {
   margin: 0;
 }
 
-.tc-shell {
+.tc-app {
   box-sizing: border-box;
   height: 100vh;
-  display: flex;
-  flex-direction: column;
-  max-width: 1008px;
-  margin-inline: auto;
-  padding: var(--vbg-space-6) var(--vbg-space-8);
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
 }
 
-.tc-header {
+/* --- Sidebar ------------------------------------------------------------ */
+
+.tc-sidebar {
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--vbg-background-200);
+  border-right: 1px solid var(--vbg-border-subtle);
+}
+
+.tc-sidebar-head {
+  padding: var(--vbg-space-4) var(--vbg-space-4) var(--vbg-space-3);
 }
 
 .tc-identity {
@@ -30,24 +35,270 @@ body {
   color: var(--vbg-text-primary);
 }
 
-.tc-main {
+.tc-tree {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 var(--vbg-space-2) var(--vbg-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-4);
+}
+
+.tc-tree-project-head {
+  display: flex;
+  align-items: center;
+  gap: var(--vbg-space-1);
+  padding: var(--vbg-space-1) var(--vbg-space-2);
+}
+
+.tc-tree-project-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--vbg-type-metadata);
+  font-weight: var(--vbg-weight-medium);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--vbg-text-secondary);
+}
+
+.tc-tree-disclosure,
+.tc-tree-add {
+  border: 0;
+  background: none;
+  padding: 0 var(--vbg-space-1);
+  font: inherit;
+  font-size: var(--vbg-type-compact);
+  color: var(--vbg-text-secondary);
+  cursor: pointer;
+  border-radius: var(--vbg-radius-small);
+}
+
+.tc-tree-disclosure:hover,
+.tc-tree-add:hover {
+  color: var(--vbg-text-primary);
+}
+
+.tc-tree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--vbg-space-2);
+  width: 100%;
+  border: 0;
+  background: none;
+  text-align: left;
+  font: inherit;
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+  color: var(--vbg-text-primary);
+  padding: var(--vbg-space-1) var(--vbg-space-2);
+  border-radius: var(--vbg-radius-small);
+  cursor: pointer;
+}
+
+.tc-tree-row:hover {
+  background: var(--vbg-gray-alpha-100);
+}
+
+.tc-tree-row[aria-current="true"] {
+  background: var(--vbg-gray-alpha-200);
+  font-weight: var(--vbg-weight-medium);
+}
+
+.tc-tree-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Subagent sessions nest under their agent session on a guide line. */
+.tc-tree-subagents {
+  margin-left: var(--vbg-space-4);
+  padding-left: var(--vbg-space-2);
+  border-left: 1px solid var(--vbg-border-subtle);
+}
+
+.tc-tree-badge {
+  font-size: var(--vbg-type-metadata);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-tree-empty {
+  margin: 0;
+  padding: var(--vbg-space-1) var(--vbg-space-2);
+  font-size: var(--vbg-type-compact);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-2);
+  padding: var(--vbg-space-3) var(--vbg-space-4);
+  border-top: 1px solid var(--vbg-border-subtle);
+}
+
+.tc-quiet-button {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--vbg-type-compact);
+  color: var(--vbg-text-secondary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.tc-quiet-button:hover {
+  color: var(--vbg-text-primary);
+}
+
+/* --- Session pane ------------------------------------------------------- */
+
+.tc-content {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tc-view {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  padding: var(--vbg-space-4) var(--vbg-space-8);
 }
 
-.tc-main > * {
+.tc-view[hidden] {
+  display: none;
+}
+
+.tc-pane-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--vbg-space-6);
+  padding-bottom: var(--vbg-space-3);
+  border-bottom: 1px solid var(--vbg-border-subtle);
+}
+
+.tc-pane-title-group > * {
   margin: 0;
 }
 
-.tc-main > .vbg-lede {
-  margin-top: var(--vbg-space-3);
+.tc-pane-title {
+  font-size: var(--vbg-type-subsection);
+  font-weight: var(--vbg-weight-heading);
+  line-height: var(--vbg-leading-subsection);
+}
+
+.tc-pane-context {
+  margin-top: var(--vbg-space-1);
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-transcript {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-block: var(--vbg-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-4);
+}
+
+/* Raw-record rendering: a deliberate stub until chat rendering is designed. */
+.tc-event > * {
+  margin: 0;
+}
+
+.tc-event-meta {
+  font-family: var(--vbg-font-mono);
+  font-size: var(--vbg-type-metadata);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-event-body {
+  margin-top: var(--vbg-space-1);
+  font-family: var(--vbg-font-mono);
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tc-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: var(--vbg-space-2);
+  text-align: center;
+}
+
+.tc-empty > * {
+  margin: 0;
+}
+
+.tc-empty-copy {
+  font-size: var(--vbg-type-compact);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-composer {
+  padding-top: var(--vbg-space-3);
+  border-top: 1px solid var(--vbg-border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-2);
+}
+
+.tc-composer > * {
+  margin: 0;
+}
+
+.tc-composer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--vbg-space-3);
+}
+
+.tc-composer-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  font: inherit;
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+  color: var(--vbg-text-primary);
+  background: var(--vbg-surface-primary);
+  border: 1px solid var(--vbg-border-default);
+  border-radius: var(--vbg-radius);
+  padding: var(--vbg-space-2) var(--vbg-space-3);
+}
+
+.tc-composer-input:focus-visible {
+  outline: var(--vbg-focus);
+  outline-offset: 1px;
+}
+
+/* --- Connections view (onboarding steps, shown in the session pane) ------ */
+
+.tc-setup {
+  max-width: 760px;
 }
 
 .tc-progress {
-  margin-top: var(--vbg-space-8);
+  margin: var(--vbg-space-4) 0 0;
 }
 
 .tc-steps {
@@ -109,11 +360,6 @@ body {
 
 /* Reserve the line so the completion message never reflows the page. */
 .tc-note {
-  margin-top: var(--vbg-space-4);
+  margin: var(--vbg-space-4) 0 0;
   min-height: 1.5em;
-}
-
-.tc-footer {
-  display: flex;
-  justify-content: flex-start;
 }

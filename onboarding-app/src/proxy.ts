@@ -33,6 +33,18 @@ export interface RunningProxy {
   close(): Promise<void>;
 }
 
+// Where the app-wide proxy actually ended up, for modules (like the agent
+// invocation builder) that hand its address to the grok CLI.
+let activeProxy: { port: number; secret: string } | null = null;
+
+export function setActiveProxy(port: number, secret: string): void {
+  activeProxy = { port, secret };
+}
+
+export function getActiveProxy(): { port: number; secret: string } | null {
+  return activeProxy;
+}
+
 const FORWARD_REQUEST_HEADERS = [
   "content-type",
   "accept",

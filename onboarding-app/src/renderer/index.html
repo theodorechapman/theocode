@@ -12,22 +12,22 @@
   <link href="app.css" rel="stylesheet">
 </head>
 <body class="vbg-report">
-  <div class="tc-shell">
+  <div class="tc-app">
     <a class="vbg-skip-link" href="#main">Skip to content</a>
-    <header class="tc-header">
-      <span class="tc-identity">theocode</span>
-      <span class="vbg-meta">Setup</span>
-    </header>
-    <main id="main" class="tc-main">
-      <h1 class="vbg-title">Connect your tools</h1>
-      <p class="vbg-lede">Sign in to each service below. Every connection opens your browser, completes there, and returns here on its own.</p>
-      <p class="vbg-meta tc-progress" id="progress" aria-live="polite">0 of 3 connected</p>
-      <div class="tc-steps" id="steps"></div>
-      <p class="vbg-caption tc-note" id="note" aria-live="polite">Credentials are encrypted with your system keychain and stay on this device.</p>
+    <aside class="tc-sidebar">
+      <header class="tc-sidebar-head">
+        <span class="tc-identity">theocode</span>
+      </header>
+      <nav id="tree" class="tc-tree" aria-label="Projects and sessions"></nav>
+      <div class="tc-sidebar-foot">
+        <button id="new-project" class="vbg-button" type="button">New project</button>
+        <button id="nav-connections" class="tc-quiet-button" type="button">Connections</button>
+      </div>
+    </aside>
+    <main id="main" class="tc-content">
+      <div id="view-workspace" class="tc-view"></div>
+      <div id="view-connections" class="tc-view tc-setup" hidden></div>
     </main>
-    <footer class="tc-footer">
-      <span class="vbg-caption">theocode setup</span>
-    </footer>
   </div>
   <script type="module" src="renderer.js"></script>
 </body>

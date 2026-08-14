@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -11,7 +11,7 @@ import {
   unregisterProxyFromGrok,
   writeGrokCliAuth,
 } from "./grok";
-import { startProxy, type RunningProxy } from "./proxy";
+import { setActiveProxy, startProxy, type RunningProxy } from "./proxy";
 import {
   getConnections,
   getCredentials,
@@ -19,7 +19,23 @@ import {
   saveConnection,
   updateTokens,
 } from "./store";
+import {
+  appendEvent,
+  createProject,
+  createSession,
+  getTree,
+  readEvents,
+} from "./theocode/sessions";
+import { flushDb } from "./theocode/db";
+import type { SessionRef } from "./theocode/types";
 import type { ConnectionInfo, ConnectResult, ProviderId } from "./types";
+
+// scripts/dev.mjs assigns each dev instance its own suffix (and port block) so
+// parallel agents' Electron processes never share a userData dir or ports.
+const instance = process.env.THEOCODE_INSTANCE;
+if (instance) {
+  app.setPath("userData", `${app.getPath("userData")}-${instance}`);
+}
 
 let win: BrowserWindow | null = null;
 const inFlight = new Set<ProviderId>();
@@ -90,6 +106,7 @@ async function startProxyAndSync(): Promise<void> {
     saveTokens: (providerId, tokens) =>
       updateTokens(providerId as ProviderId, tokens),
   });
+  setActiveProxy(proxy.port, proxySecret);
   await Promise.all(Object.keys(PROXY_ROUTES).map(syncGrokRegistration));
 }
 
@@ -200,7 +217,55 @@ ipcMain.handle("connections:disconnect", async (_event, providerId: ProviderId) 
   }
 });
 
+ipcMain.handle("workspace:tree", () => getTree());
+
+ipcMain.handle("workspace:createProject", async () => {
+  const result = await dialog.showOpenDialog(win!, {
+    title: "Choose a project directory",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  const path = result.filePaths[0];
+  if (result.canceled || !path) return null;
+  return createProject(path);
+});
+
+ipcMain.handle("workspace:createSession", (_event, projectId: string) =>
+  createSession(projectId),
+);
+
+ipcMain.handle("workspace:events", (_event, ref: SessionRef) => readEvents(ref));
+
+// Records the user's message. Invoking the grok turn (src/theocode/agent.ts)
+// is intentionally not wired yet — the chat surface is a stub while rendering
+// decisions are made.
+ipcMain.handle(
+  "workspace:send",
+  (_event, ref: SessionRef, text: string) => {
+    const event = appendEvent(ref, { type: "user_message", text });
+    win?.webContents.send("workspace:event", { ref, event });
+    return readEvents(ref);
+  },
+);
+
+// THEOCODE_DEMO=1 (with THEOCODE_HOME pointed somewhere disposable) seeds a
+// tree so the sidebar and subagent nesting can be exercised without an agent.
+function seedDemo(): void {
+  if (getTree().projects.length > 0) return;
+  const project = createProject(join(app.getPath("home"), "Coding", "xai_onsite"));
+  const session = createSession(project.id, undefined, "Wire up the sidebar");
+  const ref: SessionRef = { projectId: project.id, sessionId: session.id };
+  appendEvent(ref, { type: "user_message", text: "Build the session sidebar." });
+  appendEvent(ref, { type: "agent_message", text: "Scaffolding the tree now." });
+  const sub = createSession(project.id, session.id, "Explore renderer layout");
+  appendEvent(
+    { ...ref, subagentId: sub.id },
+    { type: "agent_message", text: "Reading src/renderer for conventions." },
+  );
+  createSession(project.id, undefined, "Session storage design");
+}
+
 app.whenReady().then(async () => {
+  if (process.env.THEOCODE_DEMO === "1") seedDemo();
   createWindow();
   await startProxyAndSync();
 });
@@ -210,3 +275,4 @@ app.on("activate", () => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
+app.on("before-quit", () => flushDb());
