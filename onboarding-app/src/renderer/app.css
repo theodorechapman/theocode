@@ -1,0 +1,119 @@
+/* theocode setup — fixed-viewport layout, no page scrolling.
+   Page-owned classes only; colors, type, and spacing come from public tokens. */
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+}
+
+.tc-shell {
+  box-sizing: border-box;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  max-width: 1008px;
+  margin-inline: auto;
+  padding: var(--vbg-space-6) var(--vbg-space-8);
+}
+
+.tc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.tc-identity {
+  font-size: var(--vbg-type-label);
+  font-weight: var(--vbg-weight-semibold);
+  color: var(--vbg-text-primary);
+}
+
+.tc-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.tc-main > * {
+  margin: 0;
+}
+
+.tc-main > .vbg-lede {
+  margin-top: var(--vbg-space-3);
+}
+
+.tc-progress {
+  margin-top: var(--vbg-space-8);
+}
+
+.tc-steps {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--vbg-border-subtle);
+  margin-top: var(--vbg-space-3);
+}
+
+.tc-step {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: var(--vbg-space-6);
+  padding-block: var(--vbg-space-4);
+  border-bottom: 1px solid var(--vbg-border-subtle);
+}
+
+.tc-step > * {
+  margin: 0;
+}
+
+.tc-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-1);
+  min-width: 0;
+}
+
+.tc-step-body > * {
+  margin: 0;
+}
+
+.tc-step-name {
+  font-size: var(--vbg-type-subsection);
+  font-weight: var(--vbg-weight-heading);
+  line-height: var(--vbg-leading-subsection);
+}
+
+.tc-step-desc {
+  color: var(--vbg-text-secondary);
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+}
+
+.tc-step-status {
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-step-status[data-state="connected"] {
+  color: var(--vbg-text-primary);
+}
+
+.tc-step-status[data-state="error"] {
+  color: var(--vbg-color-error);
+}
+
+/* Reserve the line so the completion message never reflows the page. */
+.tc-note {
+  margin-top: var(--vbg-space-4);
+  min-height: 1.5em;
+}
+
+.tc-footer {
+  display: flex;
+  justify-content: flex-start;
+}
