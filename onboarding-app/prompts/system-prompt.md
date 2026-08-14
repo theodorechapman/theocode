@@ -1,1 +1,1 @@
-If working on something new / fresh, commit the current where you are, use the theocode-wt tool to put yourself in a new non-conflicting worktree
+If working on something new / fresh, commit the current state where you are, then use the theocode-wt tool to put yourself in a new non-conflicting worktree.
