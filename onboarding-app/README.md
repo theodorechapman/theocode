@@ -54,6 +54,20 @@ returns immediately: the parent can poll mid-turn (`theocode-research-poll`),
 and once its turn ends, unclaimed reports are delivered as an interrupt turn
 (`research_result` event + a new parent turn carrying the report).
 
+## Coding subagents
+
+`theocode-code` fans out one coding subagent per task card, each in its own
+child worktree (wt-N.M) branched from the coordinator's worktree. Cards are
+self-contained contracts (goal, spec, files_in_scope, done_criteria) enforced
+by schema; `notes_for_merge` is coordinator-private and returns with the
+result. Subagents run full-capability under `prompts/coding-rules.md` (commit
+before finishing, never merge), capped at `parallel` concurrent (default 3,
+queue drains as slots free). Results interrupt the coordinator with a merge
+playbook: merge each child branch into its worktree, verify done criteria,
+then `theocode-wt-remove`. Caller identity is exact for worktree sessions —
+per-workdir MCP registrations bake the label into the tool URLs
+(`/code/<projectId>/<wtLabel>`), fixing the concurrent-turn ambiguity.
+
 ## Agent
 
 `src/theocode/agent.ts` builds the headless grok invocation for a turn:

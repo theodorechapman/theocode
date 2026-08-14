@@ -26,7 +26,12 @@ export interface LocalMcpTool {
   inputSchema: Record<string, unknown>;
 }
 
-/** A first-party MCP server mounted at /<route>/<projectId>. */
+/**
+ * A first-party MCP server mounted at /<route>/<projectId>[/<callerLabel>].
+ * The optional caller label is the worktree label baked into the URL that a
+ * per-workdir registration carries, identifying the calling session exactly
+ * (worktrees are bound 1:1 to sessions); main-checkout registrations omit it.
+ */
 export interface LocalMcpServer {
   serverName: string;
   tools: LocalMcpTool[];
@@ -35,6 +40,7 @@ export interface LocalMcpServer {
     projectId: string,
     toolName: string,
     args: Record<string, unknown>,
+    callerLabel?: string,
   ): Promise<string>;
 }
 
@@ -101,11 +107,12 @@ function readBody(req: IncomingMessage): Promise<Buffer> {
 
 async function handleLocalMcp(
   server: LocalMcpServer,
-  projectId: string,
+  target: string,
   req: IncomingMessage,
   res: ServerResponse,
   body: Buffer,
 ): Promise<void> {
+  const [projectId, callerLabel] = target.split("/", 2);
   if (req.method !== "POST") {
     res.writeHead(405).end();
     return;
@@ -156,6 +163,7 @@ async function handleLocalMcp(
           projectId,
           params.name,
           params.arguments ?? {},
+          callerLabel,
         );
         reply({ content: [{ type: "text", text }], isError: false });
       } catch (err) {

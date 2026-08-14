@@ -71,10 +71,10 @@ beforeAll(async () => {
           tools: [
             { name: "theocode-wt", description: "worktree", inputSchema: { type: "object" } },
           ],
-          call: async (projectId, _name, args) => {
+          call: async (projectId, _name, args, caller) => {
             if (projectId === "bad") throw new Error("not a git repo");
             const branch = typeof args.branch === "string" ? args.branch : "wt-1";
-            return `Worktree wt-1 created for ${projectId} (branch ${branch}).`;
+            return `Worktree wt-1 created for ${projectId} (branch ${branch}). caller=${caller ?? "none"}`;
           },
         },
         research: {
@@ -229,4 +229,15 @@ test("research endpoint routes tools by name", async () => {
   });
   const pollBody = (await poll.json()) as { result: { content: Array<{ text: string }> } };
   expect(pollBody.result.content[0].text).toContain("still running");
+});
+
+test("local MCP routes pass the caller worktree label through", async () => {
+  const res = await rpc("/wt/p1/wt-3", {
+    jsonrpc: "2.0",
+    id: 9,
+    method: "tools/call",
+    params: { name: "theocode-wt", arguments: {} },
+  });
+  const body = (await res.json()) as { result: { content: Array<{ text: string }> } };
+  expect(body.result.content[0].text).toContain("caller=wt-3");
 });

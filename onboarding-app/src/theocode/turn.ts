@@ -113,10 +113,14 @@ function ensureGrokDirExcluded(dir: string): void {
 async function syncProjectMcp(
   project: ProjectInfo,
   workDir: string,
+  wtLabel?: string,
 ): Promise<void> {
   const proxy = getActiveProxy();
   if (!proxy) return;
   const projectPath = workDir;
+  // Worktree registrations bake the label into the tool URLs so the proxy
+  // knows exactly which session is calling (worktrees bind 1:1 to sessions).
+  const target = wtLabel ? `${project.id}/${wtLabel}` : project.id;
   try {
     ensureFolderTrusted(projectPath);
     if (projectPath === project.path) {
@@ -134,10 +138,14 @@ async function syncProjectMcp(
     }
     const wanted: Array<{ name: string; url: string | null }> = [
       // First-party tools: always available in theocode projects.
-      { name: "theocode-wt", url: `http://127.0.0.1:${proxy.port}/wt/${project.id}` },
+      { name: "theocode-wt", url: `http://127.0.0.1:${proxy.port}/wt/${target}` },
       {
         name: "theocode-research",
-        url: `http://127.0.0.1:${proxy.port}/research/${project.id}`,
+        url: `http://127.0.0.1:${proxy.port}/research/${target}`,
+      },
+      {
+        name: "theocode-code",
+        url: `http://127.0.0.1:${proxy.port}/code/${target}`,
       },
       ...MCP_PROVIDERS.map((providerId) => ({
         name: `theocode-${providerId}`,
@@ -169,7 +177,7 @@ export function runAgentTurn(
   ref: SessionRef,
   prompt: string,
   sinks: TurnSinks,
-  opts?: { research?: boolean },
+  opts?: { research?: boolean; coding?: boolean },
 ): TurnHandle {
   // The handle exists before the process does: MCP registration has to land
   // in the project config before grok reads it, so the spawn is deferred
@@ -178,7 +186,12 @@ export function runAgentTurn(
   let interrupted = false;
 
   const start = async () => {
-  await syncProjectMcp(project, session.worktree?.path ?? project.path);
+  const wt = session.worktree;
+  await syncProjectMcp(
+    project,
+    wt?.path ?? project.path,
+    wt ? (wt.label ?? (wt.n !== undefined ? `wt-${wt.n}` : undefined)) : undefined,
+  );
   if (interrupted) {
     sinks.onPartial(ref, null);
     sinks.onDone?.(null);
