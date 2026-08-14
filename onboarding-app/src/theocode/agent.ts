@@ -1,6 +1,7 @@
 import { app } from "electron";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { reasoningEffortArgs } from "./reasoning";
 import type { ProjectInfo, SessionMeta } from "./types";
 
 // theocode drives the grok CLI as its agent: the CLI is already authenticated
@@ -60,6 +61,7 @@ export function buildAgentInvocation(
     "streaming-json",
     "--cwd",
     cwd,
+    ...reasoningEffortArgs(session.reasoningEffort),
     ...sessionArgs,
     "-p",
     prompt,

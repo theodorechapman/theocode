@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { OnboardingApi, ProviderId } from "./types";
-import type { SessionRef, SetupAnswers, WorkspaceApi } from "./theocode/types";
+import type {
+  ReasoningEffort,
+  SessionRef,
+  SetupAnswers,
+  WorkspaceApi,
+} from "./theocode/types";
 
 const onboarding: OnboardingApi = {
   getConnections: () => ipcRenderer.invoke("connections:get"),
@@ -46,6 +51,8 @@ const workspace: WorkspaceApi = {
     ipcRenderer.invoke("workspace:runSetup", projectId, answers),
   setupSeen: (projectId: string) =>
     ipcRenderer.invoke("workspace:setupSeen", projectId),
+  setReasoningEffort: (ref: SessionRef, effort: ReasoningEffort) =>
+    ipcRenderer.invoke("workspace:setReasoningEffort", ref, effort),
 };
 
 contextBridge.exposeInMainWorld("onboarding", onboarding);

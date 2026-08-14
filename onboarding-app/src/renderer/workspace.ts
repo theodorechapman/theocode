@@ -1,7 +1,9 @@
 import Lenis from "lenis";
 import { button, h } from "./dom";
+import { type EffortControl, mountEffortControl } from "./effort";
 import { showSetupDialog } from "./setup";
 import { eventBlock, isWatchedTool, PartialView } from "./transcript";
+import type { ReasoningEffort } from "../theocode/reasoning";
 import type {
   SessionEvent,
   SessionMeta,
@@ -33,6 +35,7 @@ let contentEl: HTMLElement | null = null;
 let partialView: PartialView | null = null;
 let partialHadText = false;
 let selectedProjectPath: string | undefined;
+let effortUi: EffortControl | null = null;
 
 // --- Streaming scroll -------------------------------------------------------
 //
@@ -265,6 +268,20 @@ function followStream(immediate = false): void {
   }
 }
 
+function patchSessionEffort(ref: SessionRef, effort: ReasoningEffort): void {
+  const projectNode = tree.projects.find((p) => p.project.id === ref.projectId);
+  const sessionNode = projectNode?.sessions.find(
+    (s) => s.session.id === ref.sessionId,
+  );
+  if (!sessionNode) return;
+  if (ref.subagentId) {
+    const sub = sessionNode.subagents.find((s) => s.id === ref.subagentId);
+    if (sub) sub.reasoningEffort = effort;
+  } else {
+    sessionNode.session.reasoningEffort = effort;
+  }
+}
+
 function renderPane(): void {
   if (lenisRaf) cancelAnimationFrame(lenisRaf);
   lenis?.destroy();
@@ -279,17 +296,23 @@ function renderPane(): void {
   holdUntil = 0;
   watchKey = null;
   follow = true;
+  effortUi?.destroy();
+  effortUi = null;
 
   if (!selected) {
     paneEl.replaceChildren(
       h(
         "div",
-        "tc-empty",
-        h("h1", "vbg-heading-20", "No session selected"),
+        "tc-pane",
         h(
-          "p",
-          "tc-empty-copy",
-          "Pick a session from the sidebar, or create a project to start one.",
+          "div",
+          "tc-empty",
+          h("h1", "vbg-heading-20", "No session selected"),
+          h(
+            "p",
+            "tc-empty-copy",
+            "Pick a session from the sidebar, or create a project to start one.",
+          ),
         ),
       ),
     );
@@ -298,6 +321,16 @@ function renderPane(): void {
 
   const { session, project, projectPath } = findMeta(selected);
   selectedProjectPath = projectPath;
+  const sessionRef = selected;
+  effortUi = mountEffortControl({
+    session,
+    onChange: async (effort) => {
+      const updated = await api.setReasoningEffort(sessionRef, effort);
+      if (updated?.reasoningEffort) {
+        patchSessionEffort(sessionRef, updated.reasoningEffort);
+      }
+    },
+  });
   const header = h(
     "header",
     "tc-pane-head",
@@ -313,6 +346,7 @@ function renderPane(): void {
           .join(" · "),
       ),
     ),
+    effortUi.trigger,
   );
 
   // Research subagents pin their question above the scrolling transcript.
@@ -422,11 +456,16 @@ function renderPane(): void {
   );
 
   paneEl.replaceChildren(
-    header,
-    ...(banner ? [banner] : []),
-    transcriptEl,
-    thinkingStrip,
-    composer,
+    h(
+      "div",
+      "tc-pane",
+      header,
+      ...(banner ? [banner] : []),
+      transcriptEl,
+      thinkingStrip,
+      composer,
+    ),
+    effortUi.layer,
   );
   followStream(true);
 }
@@ -435,10 +474,18 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
   tabsEl = document.getElementById("tabs")!;
   treeEl = document.getElementById("tree")!;
   paneEl = container;
+  paneEl.classList.add("tc-workspace-view");
 
-  // Escape interrupts the in-flight turn for the selected session.
+  // Escape closes the effort slide-out first; otherwise it interrupts
+  // the in-flight turn for the selected session.
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && selected) void api.interruptTurn(selected);
+    if (e.key !== "Escape") return;
+    if (effortUi?.isOpen()) {
+      e.preventDefault();
+      effortUi.close();
+      return;
+    }
+    if (selected) void api.interruptTurn(selected);
   });
 
   api.onEvent(({ ref, event }) => {
