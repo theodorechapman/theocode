@@ -135,7 +135,7 @@ export function mountEffortControl(opts: {
     layer.inert = false;
     layer.setAttribute("aria-hidden", "false");
     trigger.setAttribute("aria-expanded", "true");
-    drawer.focus();
+    drawer.focus({ preventScroll: true });
   }
 
   function close(args?: { restoreFocus?: boolean }): void {
@@ -145,7 +145,7 @@ export function mountEffortControl(opts: {
     layer.inert = true;
     layer.setAttribute("aria-hidden", "true");
     trigger.setAttribute("aria-expanded", "false");
-    if (args?.restoreFocus !== false) trigger.focus();
+    if (args?.restoreFocus !== false) trigger.focus({ preventScroll: true });
   }
 
   function onLayerKey(event: KeyboardEvent): void {

@@ -541,6 +541,7 @@ body {
   gap: var(--vbg-space-5);
   padding: var(--vbg-space-5) var(--vbg-space-6) var(--vbg-space-8);
   overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--vbg-surface-primary);
   border-left: 1px solid var(--vbg-border-subtle);
   transform: translateX(100%);
