@@ -1,3 +1,7 @@
+import type { ReasoningEffort } from "./reasoning";
+
+export type { ReasoningEffort };
+
 export interface ProjectInfo {
   id: string;
   name: string;
@@ -37,6 +41,8 @@ export interface SessionMeta {
   worktree?: { label?: string; n?: number; branch: string; path: string };
   /** Research subagents: the exact question, pinned as a banner in the pane. */
   question?: string;
+  /** Speed vs reasoning for the next grok turn. Absent means extra high. */
+  reasoningEffort?: ReasoningEffort;
 }
 
 /** In-flight streaming state for the renderer, replaced by real events on flush. */
@@ -115,4 +121,9 @@ export interface WorkspaceApi {
   runSetup(projectId: string, answers: SetupAnswers): Promise<SessionRef>;
   /** Marks the setup prompt as shown (also implied by runSetup). */
   setupSeen(projectId: string): Promise<void>;
+  /** Persists speed-vs-reasoning for this session's next turn. */
+  setReasoningEffort(
+    ref: SessionRef,
+    effort: ReasoningEffort,
+  ): Promise<SessionMeta | null>;
 }

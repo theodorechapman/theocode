@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from "electron";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -42,7 +42,8 @@ import { getProject, updateProject } from "./theocode/sessions";
 import { detectStack, installSetupSkill, runProjectSetup } from "./theocode/setup";
 import { runAgentTurn, type TurnHandle, type TurnSinks } from "./theocode/turn";
 import { flushDb } from "./theocode/db";
-import type { SessionRef, SetupAnswers } from "./theocode/types";
+import { isReasoningEffort } from "./theocode/reasoning";
+import type { ReasoningEffort, SessionRef, SetupAnswers } from "./theocode/types";
 import type { ConnectionInfo, ConnectResult, ProviderId } from "./types";
 
 // scripts/dev.mjs assigns each dev instance its own suffix (and port block) so
@@ -326,6 +327,9 @@ function createWindow(): void {
 
   const shotPath = process.env.THEOCODE_SCREENSHOT;
   if (shotPath) {
+    win.setMinimumSize(360, 600);
+    const theme = process.env.THEOCODE_THEME;
+    if (theme === "light" || theme === "dark") nativeTheme.themeSource = theme;
     win.webContents.on("did-finish-load", async () => {
       const delay = Number(process.env.THEOCODE_SCREENSHOT_DELAY_MS) || 1500;
       await new Promise((r) => setTimeout(r, delay));
@@ -334,13 +338,19 @@ function createWindow(): void {
           `document.body.classList.add("light-theme");document.body.classList.remove("dark-theme");`,
         );
       }
+      const width = Number(process.env.THEOCODE_WINDOW_WIDTH);
+      const height = Number(process.env.THEOCODE_WINDOW_HEIGHT);
+      if (width > 0 && height > 0) win!.setSize(width, height);
+      const script = process.env.THEOCODE_SCREENSHOT_JS;
       const click = process.env.THEOCODE_SCREENSHOT_CLICK;
-      if (click) {
+      if (script) {
+        await win!.webContents.executeJavaScript(script);
+      } else if (click) {
         await win!.webContents.executeJavaScript(
           `document.querySelector(${JSON.stringify(click)})?.click()`,
         );
-        await new Promise((r) => setTimeout(r, 400));
       }
+      if (script || click) await new Promise((r) => setTimeout(r, 800));
       const image = await win!.webContents.capturePage();
       const { writeFileSync } = await import("node:fs");
       writeFileSync(shotPath, image.toPNG());
@@ -561,7 +571,13 @@ async function handleResearchStart(
     : { projectId: project.id, sessionId: sub.id };
 
   const task = newResearchTask(parentRef, subRef, question, hypothesis);
-  updateSessionMeta(subRef, { question });
+  const parentEffort = parentRef
+    ? readSession(parentRef)?.reasoningEffort
+    : undefined;
+  updateSessionMeta(subRef, {
+    question,
+    ...(parentEffort ? { reasoningEffort: parentEffort } : {}),
+  });
   const prompt = researcherPrompt(question);
   const event = appendEvent(subRef, { type: "user_message", text: prompt });
   win?.webContents.send("workspace:event", { ref: subRef, event });
@@ -710,6 +726,18 @@ ipcMain.handle(
 ipcMain.handle("workspace:setupSeen", (_event, projectId: string) => {
   updateProject(projectId, { setupPromptedAt: new Date().toISOString() });
 });
+
+ipcMain.handle(
+  "workspace:setReasoningEffort",
+  (_event, ref: SessionRef, effort: ReasoningEffort) => {
+    if (!isReasoningEffort(effort)) {
+      throw new Error(`Invalid reasoning effort: ${String(effort)}`);
+    }
+    const updated = updateSessionMeta(ref, { reasoningEffort: effort });
+    if (updated) win?.webContents.send("workspace:tree-changed");
+    return updated;
+  },
+);
 
 // THEOCODE_DEMO=1 (with THEOCODE_HOME pointed somewhere disposable) seeds a
 // tree so the sidebar and subagent nesting can be exercised without an agent.

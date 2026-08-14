@@ -314,13 +314,33 @@ body {
   display: none;
 }
 
+/* Workspace view is full-bleed so the effort slide-out can cover it. */
+.tc-workspace-view {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+}
+
+.tc-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: var(--vbg-space-4) var(--vbg-space-8);
+}
+
 .tc-pane-head {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: flex-start;
   gap: var(--vbg-space-6);
   padding-bottom: var(--vbg-space-3);
   border-bottom: 1px solid var(--vbg-border-subtle);
+}
+
+.tc-pane-title-group {
+  min-width: 0;
 }
 
 .tc-pane-title-group > * {
@@ -441,6 +461,206 @@ body {
 .tc-composer-input:focus-visible {
   outline: var(--vbg-focus);
   outline-offset: 1px;
+}
+
+/* --- Reasoning vs speed slide-out ---------------------------------------- */
+
+.tc-effort-trigger {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--vbg-space-1);
+  text-align: right;
+  font: inherit;
+  color: var(--vbg-text-primary);
+  cursor: pointer;
+  flex: none;
+  min-width: 0;
+}
+
+.tc-effort-trigger:hover .tc-effort-trigger-value,
+.tc-effort-trigger:hover .tc-effort-trigger-kicker {
+  color: var(--vbg-text-primary);
+}
+
+.tc-effort-trigger:focus-visible {
+  outline: var(--vbg-focus);
+  outline-offset: 2px;
+}
+
+.tc-effort-trigger-kicker {
+  font-size: var(--vbg-type-metadata);
+  line-height: var(--vbg-leading-caption);
+  color: var(--vbg-text-secondary);
+  white-space: nowrap;
+}
+
+.tc-effort-trigger-value {
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+  font-weight: var(--vbg-weight-medium);
+  white-space: nowrap;
+}
+
+.tc-effort-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.tc-effort-layer.is-open {
+  pointer-events: auto;
+}
+
+.tc-effort-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--vbg-gray-alpha-200);
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.tc-effort-layer.is-open .tc-effort-scrim {
+  opacity: 1;
+}
+
+.tc-effort-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(22rem, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-5);
+  padding: var(--vbg-space-5) var(--vbg-space-6) var(--vbg-space-8);
+  overflow-y: auto;
+  background: var(--vbg-surface-primary);
+  border-left: 1px solid var(--vbg-border-subtle);
+  transform: translateX(100%);
+  transition: transform 200ms ease;
+}
+
+.tc-effort-layer.is-open .tc-effort-drawer {
+  transform: none;
+}
+
+.tc-effort-drawer-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--vbg-space-4);
+}
+
+.tc-effort-drawer-head > * {
+  margin: 0;
+}
+
+.tc-effort-title {
+  min-width: 0;
+  font-size: var(--vbg-type-subsection);
+  font-weight: var(--vbg-weight-heading);
+  line-height: var(--vbg-leading-subsection);
+}
+
+.tc-effort-drawer-head .tc-quiet-button {
+  flex: none;
+}
+
+.tc-effort-lede {
+  margin: 0;
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-effort-scale {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tc-effort-pole {
+  margin: 0;
+  font-size: var(--vbg-type-metadata);
+  line-height: var(--vbg-leading-caption);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-effort-pole:first-of-type {
+  margin-bottom: var(--vbg-space-2);
+}
+
+.tc-effort-pole:last-of-type {
+  margin-top: var(--vbg-space-3);
+}
+
+.tc-effort-option {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: var(--vbg-space-3);
+  align-items: start;
+  padding: var(--vbg-space-3) var(--vbg-space-2);
+  margin-inline: calc(-1 * var(--vbg-space-2));
+  border-radius: var(--vbg-radius-small);
+  cursor: pointer;
+}
+
+.tc-effort-option:has(input:checked) {
+  background: var(--vbg-gray-alpha-200);
+}
+
+.tc-effort-option:focus-within {
+  outline: var(--vbg-focus);
+  outline-offset: 1px;
+}
+
+.tc-effort-option input {
+  margin-top: 0.3em;
+  accent-color: var(--vbg-text-primary);
+}
+
+.tc-effort-option input:focus {
+  outline: none;
+}
+
+.tc-effort-drawer:focus {
+  outline: none;
+}
+
+.tc-effort-option-copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-1);
+  min-width: 0;
+}
+
+.tc-effort-option-label {
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+  font-weight: var(--vbg-weight-medium);
+}
+
+.tc-effort-option-detail {
+  font-size: var(--vbg-type-metadata);
+  line-height: var(--vbg-leading-caption);
+  color: var(--vbg-text-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-effort-scrim,
+  .tc-effort-drawer {
+    transition: none;
+  }
 }
 
 /* --- Connections view (onboarding steps, shown in the session pane) ------ */
