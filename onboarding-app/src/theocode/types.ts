@@ -86,6 +86,11 @@ export interface WorkspaceApi {
   getEvents(ref: SessionRef): Promise<SessionEvent[]>;
   /** Appends a user message record; the agent turn itself is not wired yet. */
   sendMessage(ref: SessionRef, text: string): Promise<SessionEvent[]>;
+  /** Kills the in-flight turn for this session, if any (Escape). */
+  interruptTurn(ref: SessionRef): Promise<void>;
+  /** Directory entries ("name/" for dirs, dirs first), for List fallback
+   *  when the tool result carried no listing text. */
+  listDirectory(path: string): Promise<string[]>;
   onEvent(cb: (update: { ref: SessionRef; event: SessionEvent }) => void): void;
   onPartial(
     cb: (update: { ref: SessionRef; partial: TurnPartial | null }) => void,

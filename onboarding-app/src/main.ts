@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { runOAuthFlow } from "./oauth";
 import { getProvider, GROK_CLIENT_ID, GROK_ISSUER } from "./providers";
 import {
@@ -29,7 +29,7 @@ import {
 } from "./theocode/sessions";
 import { getProject, updateProject } from "./theocode/sessions";
 import { detectStack, installSetupSkill, runProjectSetup } from "./theocode/setup";
-import { runAgentTurn, type TurnSinks } from "./theocode/turn";
+import { runAgentTurn, type TurnHandle, type TurnSinks } from "./theocode/turn";
 import { flushDb } from "./theocode/db";
 import type { SessionRef, SetupAnswers } from "./theocode/types";
 import type { ConnectionInfo, ConnectResult, ProviderId } from "./types";
@@ -242,7 +242,7 @@ ipcMain.handle("workspace:events", (_event, ref: SessionRef) => readEvents(ref))
 
 // ---- Agent turns -----------------------------------------------------------
 
-const turnsInFlight = new Set<string>();
+const turnsInFlight = new Map<string, TurnHandle>();
 
 function turnKey(ref: SessionRef): string {
   return `${ref.projectId}/${ref.sessionId}/${ref.subagentId ?? ""}`;
@@ -279,17 +279,38 @@ ipcMain.handle(
       win?.webContents.send("workspace:event", { ref, event: notice });
       return readEvents(ref);
     }
-    turnsInFlight.add(key);
-    runAgentTurn(
+    const handle = runAgentTurn(
       project,
       session,
       ref,
       text,
       turnSinks({ onDone: () => turnsInFlight.delete(key) }),
     );
+    turnsInFlight.set(key, handle);
     return readEvents(ref);
   },
 );
+
+ipcMain.handle("workspace:interrupt", (_event, ref: SessionRef) => {
+  turnsInFlight.get(turnKey(ref))?.interrupt();
+});
+
+// Fallback for List blocks whose tool result carried no listing text.
+ipcMain.handle("workspace:listDir", (_event, path: string): string[] => {
+  try {
+    return readdirSync(path, { withFileTypes: true })
+      .filter((entry) => !entry.name.startsWith("."))
+      .sort(
+        (a, b) =>
+          Number(b.isDirectory()) - Number(a.isDirectory()) ||
+          a.name.localeCompare(b.name),
+      )
+      .slice(0, 50)
+      .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name));
+  } catch {
+    return [];
+  }
+});
 
 function requireProject(projectId: string) {
   const project = getProject(projectId);
@@ -307,13 +328,13 @@ ipcMain.handle(
     const project = requireProject(projectId);
     updateProject(projectId, { setupPromptedAt: new Date().toISOString() });
     let key = "";
-    const ref = runProjectSetup(
+    const { ref, handle } = runProjectSetup(
       project,
       answers,
       turnSinks({ onDone: () => turnsInFlight.delete(key) }),
     );
     key = turnKey(ref);
-    turnsInFlight.add(key);
+    turnsInFlight.set(key, handle);
     return ref;
   },
 );
@@ -353,16 +374,16 @@ function runDemoTurn(): void {
   const session = readSession(ref);
   if (!session) return;
   const key = turnKey(ref);
-  turnsInFlight.add(key);
   const event = appendEvent(ref, { type: "user_message", text: "Demo turn." });
   win?.webContents.send("workspace:event", { ref, event });
-  runAgentTurn(
+  const handle = runAgentTurn(
     node.project,
     session,
     ref,
     "Demo turn.",
     turnSinks({ onDone: () => turnsInFlight.delete(key) }),
   );
+  turnsInFlight.set(key, handle);
 }
 
 app.whenReady().then(async () => {

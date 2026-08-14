@@ -25,6 +25,11 @@ export interface TurnSinks {
   onDone?(exitCode: number | null): void;
 }
 
+export interface TurnHandle {
+  /** Kills the grok process; the transcript gets a notice, not an error. */
+  interrupt(): void;
+}
+
 interface ToolState {
   toolCallId: string;
   toolName: string;
@@ -45,7 +50,7 @@ export function runAgentTurn(
   ref: SessionRef,
   prompt: string,
   sinks: TurnSinks,
-): void {
+): TurnHandle {
   const invocation = buildAgentInvocation(project, session, prompt);
   const child = spawn(grokBinary(), invocation.args, {
     cwd: invocation.cwd,
@@ -150,16 +155,40 @@ export function runAgentTurn(
         const tool = tools.get(String(record.toolCallId ?? ""));
         if (!tool) break;
         const content = record.content as
-          | Array<{ content?: { text?: unknown } }>
+          | Array<Record<string, unknown>>
           | undefined;
-        const text = content?.[0]?.content?.text;
-        if (typeof text === "string" && text) tool.output = text;
+        if (Array.isArray(content)) {
+          const texts = content
+            .map((item) => {
+              const inner = item.content as
+                | Record<string, unknown>
+                | undefined;
+              const text = inner?.text ?? item.text;
+              return typeof text === "string" ? text : "";
+            })
+            .filter(Boolean);
+          if (texts.length > 0) tool.output = texts.join("\n");
+        }
         if (typeof record.status === "string" && record.status) {
           tool.status = record.status;
         }
-        const rawOutput = record.rawOutput as { exit_code?: unknown } | null;
+        const rawOutput = record.rawOutput as
+          | Record<string, unknown>
+          | null
+          | undefined;
         if (typeof rawOutput?.exit_code === "number") {
           tool.exitCode = rawOutput.exit_code;
+        }
+        // Some tools (list_dir among them) put their result only in
+        // rawOutput; fall back to any string field that looks like output.
+        if (!tool.output && rawOutput) {
+          for (const key of ["output", "stdout", "content", "result", "text"]) {
+            const value = rawOutput[key];
+            if (typeof value === "string" && value.trim()) {
+              tool.output = value;
+              break;
+            }
+          }
         }
         if (tool.status === "completed" || tool.status === "failed") {
           flushTool(tool);
@@ -219,11 +248,14 @@ export function runAgentTurn(
     sinks.onPartial(ref, null);
     sinks.onDone?.(null);
   });
+  let interrupted = false;
   child.on("close", (code) => {
     if (partialTimer) clearTimeout(partialTimer);
     flushCur();
     for (const tool of [...tools.values()]) flushTool(tool);
-    if (code !== 0) {
+    if (interrupted) {
+      emit({ type: "notice", text: "Interrupted." });
+    } else if (code !== 0) {
       emit({
         type: "turn_error",
         text: `grok exited with code ${code}`,
@@ -233,4 +265,12 @@ export function runAgentTurn(
     sinks.onPartial(ref, null);
     sinks.onDone?.(code);
   });
+
+  return {
+    interrupt() {
+      if (interrupted) return;
+      interrupted = true;
+      child.kill("SIGTERM");
+    },
+  };
 }
