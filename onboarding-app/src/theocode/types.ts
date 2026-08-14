@@ -106,6 +106,9 @@ export interface WorkspaceApi {
   ): void;
   /** Fires when session/project metadata changed outside the transcript. */
   onTreeChanged(cb: () => void): void;
+  /** Turn keys ("projectId/sessionId/subagentId?") with a turn in flight. */
+  getActiveTurns(): Promise<string[]>;
+  onActiveTurns(cb: (keys: string[]) => void): void;
   /** Filesystem detection for the setup prompt. */
   getSetupInfo(projectId: string): Promise<SetupDetection>;
   /** Starts the setup agent run; resolves with the new session's ref. */

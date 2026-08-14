@@ -33,6 +33,10 @@ const workspace: WorkspaceApi = {
   onPartial: (cb) => {
     ipcRenderer.on("workspace:partial", (_event, update) => cb(update));
   },
+  getActiveTurns: () => ipcRenderer.invoke("workspace:activeTurns"),
+  onActiveTurns: (cb) => {
+    ipcRenderer.on("workspace:active-turns", (_event, keys) => cb(keys));
+  },
   onTreeChanged: (cb) => {
     ipcRenderer.on("workspace:tree-changed", () => cb());
   },

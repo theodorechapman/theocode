@@ -19,6 +19,7 @@ declare global {
 const api = window.workspace;
 
 let tree: WorkspaceTree = { projects: [] };
+let activeTurnKeys = new Set<string>();
 let selected: SessionRef | null = null;
 /** The project whose tab is active; the sidebar lists its sessions. */
 let activeProjectId: string | null = null;
@@ -145,6 +146,15 @@ function sessionRow(
   const row = button("tc-tree-row", "", () => select(ref));
   row.classList.add(`tc-tree-${kind}`);
   if (sameRef(selected, ref)) row.setAttribute("aria-current", "true");
+  const active = activeTurnKeys.has(
+    `${ref.projectId}/${ref.sessionId}/${ref.subagentId ?? ""}`,
+  );
+  if (active) {
+    const ripple = h("span", "tc-ripple", h("span"), h("span"), h("span"));
+    ripple.setAttribute("role", "img");
+    ripple.setAttribute("aria-label", "Turn running");
+    row.append(ripple);
+  }
   row.append(
     h("span", "tc-tree-title", meta.title),
     ...(meta.worktree
@@ -494,6 +504,11 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
     followStream();
   });
 
+  api.onActiveTurns((keys) => {
+    activeTurnKeys = new Set(keys);
+    renderTree();
+  });
+
   api.onTreeChanged(async () => {
     tree = await api.getTree();
     renderTree();
@@ -530,6 +545,7 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
   });
 
   tree = await api.getTree();
+  activeTurnKeys = new Set(await api.getActiveTurns());
   activeProjectId = tree.projects[0]?.project.id ?? null;
   const first = tree.projects[0]?.sessions[0]?.session;
   await select(

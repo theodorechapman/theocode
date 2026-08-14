@@ -429,6 +429,20 @@ ipcMain.handle("workspace:events", (_event, ref: SessionRef) => readEvents(ref))
 
 const turnsInFlight = new Map<string, TurnHandle>();
 
+function broadcastActiveTurns(): void {
+  win?.webContents.send("workspace:active-turns", [...turnsInFlight.keys()]);
+}
+
+function trackTurn(key: string, handle: TurnHandle): void {
+  turnsInFlight.set(key, handle);
+  broadcastActiveTurns();
+}
+
+function untrackTurn(key: string): void {
+  turnsInFlight.delete(key);
+  broadcastActiveTurns();
+}
+
 function turnKey(ref: SessionRef): string {
   return `${ref.projectId}/${ref.sessionId}/${ref.subagentId ?? ""}`;
 }
@@ -464,13 +478,13 @@ function startTurn(
     prompt,
     turnSinks({
       onDone: (code) => {
-        turnsInFlight.delete(key);
+        untrackTurn(key);
         onTurnFinished(ref, code);
       },
     }),
     { research: opts?.research },
   );
-  turnsInFlight.set(key, handle);
+  trackTurn(key, handle);
   return true;
 }
 
@@ -593,6 +607,8 @@ ipcMain.handle(
   },
 );
 
+ipcMain.handle("workspace:activeTurns", () => [...turnsInFlight.keys()]);
+
 ipcMain.handle("workspace:interrupt", (_event, ref: SessionRef) => {
   turnsInFlight.get(turnKey(ref))?.interrupt();
 });
@@ -668,13 +684,13 @@ ipcMain.handle(
       answers,
       turnSinks({
         onDone: (code) => {
-          turnsInFlight.delete(key);
+          untrackTurn(key);
           onTurnFinished(ref, code);
         },
       }),
     );
     key = turnKey(ref);
-    turnsInFlight.set(key, handle);
+    trackTurn(key, handle);
     return ref;
   },
 );
