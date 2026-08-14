@@ -200,6 +200,25 @@ function renderPane(): void {
     ),
   );
 
+  // Research subagents pin their question above the scrolling transcript.
+  // Older sessions without the metadata fall back to parsing the first prompt.
+  let question = session?.question;
+  if (!question && selected.subagentId) {
+    const first = events.find((e) => e.type === "user_message");
+    const match = /^Research question:\n\n([\s\S]*?)\n\nAnswer this question/.exec(
+      typeof first?.text === "string" ? first.text : "",
+    );
+    if (match) question = match[1];
+  }
+  const banner = question
+    ? h(
+        "div",
+        "tc-question-banner",
+        h("p", "tc-question-label", "Question"),
+        h("p", "tc-question-text", question),
+      )
+    : null;
+
   partialView = new PartialView();
   transcriptEl = h("div", "tc-transcript");
   if (events.length === 0) {
@@ -233,7 +252,12 @@ function renderPane(): void {
     h("p", "vbg-caption", "Enter to send. Shift+Enter for a new line."),
   );
 
-  paneEl.replaceChildren(header, transcriptEl, composer);
+  paneEl.replaceChildren(
+    header,
+    ...(banner ? [banner] : []),
+    transcriptEl,
+    composer,
+  );
   scrollToBottom();
 }
 

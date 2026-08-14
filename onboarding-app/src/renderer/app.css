@@ -639,3 +639,28 @@ body {
   border-left: 2px solid var(--vbg-border-subtle);
   padding-left: var(--vbg-space-3);
 }
+
+/* Research question banner: pinned above the scrolling transcript. */
+.tc-question-banner {
+  flex: none;
+  margin-top: var(--vbg-space-3);
+  padding: var(--vbg-space-3) var(--vbg-space-4);
+  background: var(--vbg-surface-secondary);
+  border-radius: var(--vbg-radius);
+}
+
+.tc-question-banner > * {
+  margin: 0;
+}
+
+.tc-question-label {
+  font-size: var(--vbg-type-metadata);
+  font-weight: var(--vbg-weight-medium);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-question-text {
+  margin-top: var(--vbg-space-1);
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+}

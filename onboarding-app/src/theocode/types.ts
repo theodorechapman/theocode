@@ -33,6 +33,8 @@ export interface SessionMeta {
   grokSessionId?: string;
   /** Set when the session moved itself into a worktree via the theocode-wt tool. */
   worktree?: { label?: string; n?: number; branch: string; path: string };
+  /** Research subagents: the exact question, pinned as a banner in the pane. */
+  question?: string;
 }
 
 /** In-flight streaming state for the renderer, replaced by real events on flush. */

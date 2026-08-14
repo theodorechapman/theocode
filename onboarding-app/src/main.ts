@@ -508,6 +508,7 @@ async function handleResearchStart(
     : { projectId: project.id, sessionId: sub.id };
 
   const task = newResearchTask(parentRef, subRef, question, hypothesis);
+  updateSessionMeta(subRef, { question });
   const prompt = researcherPrompt(question);
   const event = appendEvent(subRef, { type: "user_message", text: prompt });
   win?.webContents.send("workspace:event", { ref: subRef, event });
