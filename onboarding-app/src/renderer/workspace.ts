@@ -66,7 +66,13 @@ function sessionRow(
   row.append(
     h("span", "tc-tree-title", meta.title),
     ...(meta.worktree
-      ? [h("span", "tc-tree-badge", `wt-${meta.worktree.n}`)]
+      ? [
+          h(
+            "span",
+            "tc-tree-badge",
+            meta.worktree.label ?? `wt-${meta.worktree.n}`,
+          ),
+        ]
       : []),
     ...(kind === "subagent" ? [h("span", "tc-tree-badge", "subagent")] : []),
   );

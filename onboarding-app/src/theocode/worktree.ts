@@ -3,19 +3,28 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 
-// Worktree allocation for the theocode-wt tool. Mirrors the conventions of
-// the skill's scripts/worktree.sh: worktrees live at .worktrees/wt-N, and
-// each claims a port block (app 3100+100n, supabase 54321+100n) via atomic
-// mkdir locks under ~/.theocode/port-locks so parallel stacks never collide.
+// Worktree allocation for the theocode-wt tool.
+//
+// Naming encodes the merge topology and is HARD-CAPPED at two levels:
+//   wt-N     top-level task worktree, branched from the project HEAD
+//   wt-N.M   child of wt-N, branched from wt-N's branch, merges back into it
+// A caller already inside wt-N gets children wt-N.M; a caller inside a child
+// wt-N.M gets SIBLINGS (more wt-N.*), never wt-N.M.X.
+//
+// Every worktree claims a flat port block (app 3100+100b, supabase 54321+100b)
+// via atomic mkdir locks so parallel stacks never collide; hierarchy never
+// leaks into port allocation.
 
 export interface WorktreeInfo {
-  n: number;
+  label: string;
   branch: string;
   path: string;
   ports: {
@@ -24,6 +33,19 @@ export interface WorktreeInfo {
     supabaseDb: number;
     supabaseStudio: number;
   };
+}
+
+function lockRoot(): string {
+  return (
+    process.env.THEOCODE_PORT_LOCK_DIR ??
+    join(homedir(), ".theocode", "port-locks")
+  );
+}
+
+function git(projectPath: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", projectPath, ...args], {
+    encoding: "utf8",
+  }).trim();
 }
 
 function ensureIgnored(projectPath: string, entry: string): void {
@@ -41,20 +63,32 @@ function ensureIgnored(projectPath: string, entry: string): void {
   appendFileSync(path, `${content.endsWith("\n") || !content ? "" : "\n"}${entry}\n`);
 }
 
+function nextLabel(wtRoot: string, prefix: string): string {
+  let n = 1;
+  while (existsSync(join(wtRoot, `${prefix}${n}`))) n++;
+  return `${prefix}${n}`;
+}
+
+function branchOfWorktree(dir: string): string | null {
+  try {
+    return git(dir, "branch", "--show-current") || null;
+  } catch {
+    return null;
+  }
+}
+
 export function createWorktree(
   projectPath: string,
   branchArg?: string,
+  callerWt?: { label: string; branch: string },
 ): WorktreeInfo {
-  const git = (...args: string[]): string =>
-    execFileSync("git", ["-C", projectPath, ...args], { encoding: "utf8" });
-
   try {
-    git("rev-parse", "--git-dir");
+    git(projectPath, "rev-parse", "--git-dir");
   } catch {
     throw new Error("This project is not a git repository — run git init first.");
   }
   try {
-    git("rev-parse", "HEAD");
+    git(projectPath, "rev-parse", "HEAD");
   } catch {
     throw new Error(
       "The repository has no commits yet — commit your work first, then create a worktree.",
@@ -63,21 +97,44 @@ export function createWorktree(
 
   const wtRoot = join(projectPath, ".worktrees");
   mkdirSync(wtRoot, { recursive: true });
-  let n = 1;
-  while (existsSync(join(wtRoot, `wt-${n}`))) n++;
-  const branch = branchArg?.trim() || `wt-${n}`;
-  const dir = join(wtRoot, `wt-${n}`);
-  git("worktree", "add", dir, "-B", branch);
+
+  // Two-level hierarchy: children of the caller's top-level worktree.
+  let label: string;
+  let baseBranch: string | null = null;
+  if (callerWt) {
+    const parentLabel = callerWt.label.split(".")[0];
+    const parentDir = join(wtRoot, parentLabel);
+    if (existsSync(parentDir)) {
+      label = nextLabel(wtRoot, `${parentLabel}.`);
+      baseBranch = branchOfWorktree(parentDir);
+    } else {
+      // Parent worktree is gone — fall back to a fresh top-level worktree.
+      label = nextLabel(wtRoot, "wt-");
+    }
+  } else {
+    label = nextLabel(wtRoot, "wt-");
+  }
+
+  const branch = branchArg?.trim() || label;
+  const dir = join(wtRoot, label);
+  git(
+    projectPath,
+    "worktree",
+    "add",
+    dir,
+    "-B",
+    branch,
+    ...(baseBranch ? [baseBranch] : []),
+  );
   ensureIgnored(projectPath, ".worktrees/");
 
-  // Claim the first free port block for this repo.
-  const lockRoot = join(homedir(), ".theocode", "port-locks");
-  mkdirSync(lockRoot, { recursive: true });
+  // Claim the first free port block for this repo (flat, name-independent).
+  mkdirSync(lockRoot(), { recursive: true });
   const repo = basename(projectPath);
   let block = -1;
   let lock = "";
   for (let i = 0; i < 50; i++) {
-    const candidate = join(lockRoot, `${repo}-block-${i}`);
+    const candidate = join(lockRoot(), `${repo}-block-${i}`);
     try {
       mkdirSync(candidate);
       writeFileSync(join(candidate, "claim"), dir);
@@ -116,7 +173,7 @@ export function createWorktree(
   }
 
   return {
-    n,
+    label,
     branch,
     path: dir,
     ports: {
@@ -126,4 +183,69 @@ export function createWorktree(
       supabaseStudio: sb + 2,
     },
   };
+}
+
+export function childrenOf(projectPath: string, label: string): string[] {
+  const wtRoot = join(projectPath, ".worktrees");
+  try {
+    return readdirSync(wtRoot)
+      .filter((name) => name.startsWith(`${label}.`))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+function releasePortLock(dir: string): void {
+  try {
+    const env = readFileSync(join(dir, ".env.ports"), "utf8");
+    const lock = env
+      .split("\n")
+      .find((l) => l.startsWith("PORT_LOCK="))
+      ?.slice("PORT_LOCK=".length)
+      .trim();
+    if (lock) rmSync(lock, { recursive: true, force: true });
+  } catch {
+    // No port file — nothing to release.
+  }
+}
+
+/**
+ * Removes a worktree, releasing its port block. A top-level worktree with
+ * live children refuses unless `cascade` is set; cascade removes children
+ * first. Branches are left in place.
+ */
+export function removeWorktree(
+  projectPath: string,
+  label: string,
+  cascade: boolean,
+): string[] {
+  const wtRoot = join(projectPath, ".worktrees");
+  if (!existsSync(join(wtRoot, label))) {
+    throw new Error(`No worktree named ${label}`);
+  }
+  const children = childrenOf(projectPath, label);
+  if (children.length > 0 && !cascade) {
+    throw new Error(
+      `${label} has live child worktrees (${children.join(", ")}). Remove them first, or pass cascade: true to remove the whole family.`,
+    );
+  }
+  const removed: string[] = [];
+  for (const name of [...children, label]) {
+    const dir = join(wtRoot, name);
+    releasePortLock(dir);
+    try {
+      git(projectPath, "worktree", "remove", "--force", dir);
+    } catch {
+      // Fall back to deleting the directory and letting git prune the record.
+      rmSync(dir, { recursive: true, force: true });
+      try {
+        git(projectPath, "worktree", "prune");
+      } catch {
+        // Best effort.
+      }
+    }
+    removed.push(name);
+  }
+  return removed;
 }

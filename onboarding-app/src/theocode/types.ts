@@ -32,7 +32,7 @@ export interface SessionMeta {
   /** The grok CLI's session id, set after the first turn; later turns --resume it. */
   grokSessionId?: string;
   /** Set when the session moved itself into a worktree via the theocode-wt tool. */
-  worktree?: { n: number; branch: string; path: string };
+  worktree?: { label?: string; n?: number; branch: string; path: string };
 }
 
 /** In-flight streaming state for the renderer, replaced by real events on flush. */

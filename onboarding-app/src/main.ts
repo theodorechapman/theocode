@@ -27,7 +27,7 @@ import {
   readSession,
   updateSessionMeta,
 } from "./theocode/sessions";
-import { createWorktree } from "./theocode/worktree";
+import { createWorktree, removeWorktree } from "./theocode/worktree";
 import {
   MAX_QUESTION_CHARS,
   newResearchTask,
@@ -94,21 +94,61 @@ async function handleCreateWorktree(
 ): Promise<string> {
   const project = getProject(projectId);
   if (!project) throw new Error(`Unknown project: ${projectId}`);
-  const info = createWorktree(project.path, branch);
-  // Bind the worktree to the session whose turn invoked the tool, so the
-  // sidebar can label it wt-N.
+  // Hierarchy is inferred from the calling session: inside wt-N you get
+  // children wt-N.M (branched from wt-N's branch); inside a child you get
+  // siblings. Two levels is a hard limit.
   const ref = activeTurnRef(projectId);
+  const callerWt = ref ? readSession(ref)?.worktree : undefined;
+  const info = createWorktree(
+    project.path,
+    branch,
+    callerWt?.label
+      ? { label: callerWt.label, branch: callerWt.branch }
+      : callerWt?.n !== undefined
+        ? { label: `wt-${callerWt.n}`, branch: callerWt.branch }
+        : undefined,
+  );
   if (ref) {
     updateSessionMeta(ref, {
-      worktree: { n: info.n, branch: info.branch, path: info.path },
+      worktree: { label: info.label, branch: info.branch, path: info.path },
     });
     win?.webContents.send("workspace:tree-changed");
   }
+  const mergeNote = info.label.includes(".")
+    ? `This is a child of ${info.label.split(".")[0]}: it branched from that worktree's branch and should merge back into it, not into the default branch.`
+    : null;
   return [
-    `Worktree wt-${info.n} created at ${info.path} (branch ${info.branch}).`,
+    `Worktree ${info.label} created at ${info.path} (branch ${info.branch}).`,
+    ...(mergeNote ? [mergeNote] : []),
     `Do ALL further work for this task inside ${info.path}: run every command there (cd ${info.path}) and edit files under that directory only.`,
     `Reserved ports for this worktree (also written to .env.ports): PORT/APP_PORT=${info.ports.app}, SUPABASE_API_PORT=${info.ports.supabaseApi}, SUPABASE_DB_PORT=${info.ports.supabaseDb}, SUPABASE_STUDIO_PORT=${info.ports.supabaseStudio}. Use them for any dev servers or local stacks so parallel worktrees never collide.`,
   ].join("\n");
+}
+
+async function handleRemoveWorktree(
+  projectId: string,
+  label: string,
+  cascade: boolean,
+): Promise<string> {
+  const project = getProject(projectId);
+  if (!project) throw new Error(`Unknown project: ${projectId}`);
+  if (!label) throw new Error("Provide the worktree name (e.g. wt-2 or wt-2.1).");
+  const removed = removeWorktree(project.path, label, cascade);
+  // Clear stale bindings so no session keeps a dead cwd.
+  for (const projectNode of getTree().projects) {
+    if (projectNode.project.id !== projectId) continue;
+    for (const { session } of projectNode.sessions) {
+      const wtLabel = session.worktree?.label;
+      if (wtLabel && removed.includes(wtLabel)) {
+        updateSessionMeta(
+          { projectId, sessionId: session.id },
+          { worktree: undefined },
+        );
+      }
+    }
+  }
+  win?.webContents.send("workspace:tree-changed");
+  return `Removed ${removed.join(", ")} and released their port blocks. Branches were kept. Sessions that lived there now run in the main checkout again.`;
 }
 
 async function startProxyAndSync(): Promise<void> {
@@ -123,23 +163,46 @@ async function startProxyAndSync(): Promise<void> {
           {
             name: "theocode-wt",
             description:
-              "Create a fresh, non-conflicting git worktree (wt-N) for this project with its own reserved port block, and continue your work inside it. Commit your current work first.",
+              "Create a fresh, non-conflicting git worktree for this project with its own reserved port block, and continue your work inside it. Commit your current work first. From the main checkout you get a top-level wt-N; from inside wt-N you get a child wt-N.M branched off wt-N (merge it back into wt-N). Nesting is capped at two levels.",
             inputSchema: {
               type: "object",
               properties: {
                 branch: {
                   type: "string",
-                  description: "Branch name for the worktree. Defaults to wt-N.",
+                  description:
+                    "Branch name for the worktree. Defaults to its label (wt-N or wt-N.M).",
+                },
+              },
+            },
+          },
+          {
+            name: "theocode-wt-remove",
+            description:
+              "Remove a worktree by name (e.g. wt-2 or wt-2.1) and release its ports. A parent with live children refuses unless cascade is true, which removes the whole family. Branches are kept.",
+            inputSchema: {
+              type: "object",
+              required: ["name"],
+              properties: {
+                name: { type: "string", description: "Worktree label to remove." },
+                cascade: {
+                  type: "boolean",
+                  description: "Also remove all wt-N.* children.",
                 },
               },
             },
           },
         ],
-        call: (projectId, _name, args) =>
-          handleCreateWorktree(
-            projectId,
-            typeof args.branch === "string" ? args.branch : undefined,
-          ),
+        call: (projectId, name, args) =>
+          name === "theocode-wt"
+            ? handleCreateWorktree(
+                projectId,
+                typeof args.branch === "string" ? args.branch : undefined,
+              )
+            : handleRemoveWorktree(
+                projectId,
+                String(args.name ?? ""),
+                args.cascade === true,
+              ),
       },
       research: {
         serverName: "theocode-research",
