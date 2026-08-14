@@ -113,6 +113,28 @@ let selectedProjectPath: string | undefined;
 let composerRipple: HTMLElement | null = null;
 let effortUi: EffortControl | null = null;
 
+// --- Rewind mode ------------------------------------------------------------
+//
+// Double-tap Escape while no turn is running to enter rewind mode: pick a
+// past prompt (arrows or click), choose whether to restore the workdir to
+// that prompt's snapshot, and confirm. Everything from the chosen prompt on
+// is dropped; its text comes back to the composer for re-editing.
+
+interface RewindTarget {
+  seq: number;
+  text: string;
+  hasSnapshot: boolean;
+  el: HTMLElement;
+}
+let rewindUi: {
+  targets: RewindTarget[];
+  index: number;
+  bar: HTMLElement;
+  restore: HTMLInputElement;
+  note: HTMLElement;
+} | null = null;
+let lastEscAt = 0;
+
 const PROJECT_TONES = [
   "sky",
   "mint",
@@ -518,6 +540,7 @@ function renderEvidencePane(tab: EvidenceTab): void {
 }
 
 function renderPane(): void {
+  exitRewind();
   const evidence = evidenceTabs.find((t) => t.id === activeEvidenceId);
   if (evidence) {
     renderEvidencePane(evidence);
@@ -632,6 +655,7 @@ function renderPane(): void {
     for (const e of events) {
       if (research && isResearchPrompt(e)) continue;
       const block = eventBlock(e, false, selectedProjectPath);
+      if (e.type === "user_message") block.dataset.userSeq = String(e.seq);
       // Historical load: land anchored on the last significant block.
       if (e.type === "agent_message") {
         turnAnchorEl = block;
@@ -672,6 +696,19 @@ function renderPane(): void {
     },
     { passive: true },
   );
+  // In rewind mode a click on any past prompt picks it as the target.
+  transcriptEl.addEventListener("click", (e) => {
+    if (!rewindUi) return;
+    const hit = (e.target as HTMLElement).closest("[data-user-seq]");
+    if (!(hit instanceof HTMLElement)) return;
+    const idx = rewindUi.targets.findIndex(
+      (t) => t.seq === Number(hit.dataset.userSeq),
+    );
+    if (idx >= 0) {
+      rewindUi.index = idx;
+      paintRewind();
+    }
+  });
 
   // Research subagents are agent-driven; the UI never offers a prompt.
   let composer: HTMLElement | null = null;
@@ -726,6 +763,102 @@ function renderPane(): void {
   followStream(true);
 }
 
+function rewindTargets(): RewindTarget[] {
+  if (!contentEl) return [];
+  const out: RewindTarget[] = [];
+  for (const e of events) {
+    if (e.type !== "user_message") continue;
+    const el = contentEl.querySelector(`[data-user-seq="${e.seq}"]`);
+    if (!(el instanceof HTMLElement)) continue;
+    out.push({
+      seq: e.seq,
+      text: String(e.text ?? ""),
+      hasSnapshot: typeof e.snapshotSha === "string",
+      el,
+    });
+  }
+  return out;
+}
+
+/** Highlight the picked prompt, dim everything that would be dropped, and
+ *  sync the restore checkbox with whether a snapshot exists there. */
+function paintRewind(): void {
+  if (!rewindUi || !contentEl) return;
+  const target = rewindUi.targets[rewindUi.index];
+  let dropping = false;
+  for (const child of [...contentEl.children] as HTMLElement[]) {
+    if (child === target.el) dropping = true;
+    child.classList.toggle("tc-rewind-drop", dropping);
+    child.classList.toggle("tc-rewind-picked", child === target.el);
+  }
+  rewindUi.restore.disabled = !target.hasSnapshot;
+  if (!target.hasSnapshot) rewindUi.restore.checked = false;
+  rewindUi.note.textContent = target.hasSnapshot
+    ? ""
+    : "No file snapshot for this prompt — only the conversation rewinds.";
+  follow = false;
+  lenis?.scrollTo(Math.max(0, target.el.offsetTop - 80), { duration: 0.4 });
+}
+
+function enterRewind(): void {
+  if (rewindUi || !selected || selected.subagentId || selectedIsActive()) return;
+  if (!transcriptEl) return;
+  const targets = rewindTargets();
+  if (targets.length === 0) return;
+  const restore = h("input") as HTMLInputElement;
+  restore.type = "checkbox";
+  restore.checked = true;
+  const note = h("span", "tc-rewind-note");
+  const bar = h(
+    "div",
+    "tc-rewind-bar",
+    h(
+      "span",
+      "tc-rewind-hint",
+      "Rewind: ↑/↓ or click a prompt · Enter to confirm · Esc to cancel",
+    ),
+    note,
+    h("label", "tc-rewind-restore", restore, "Restore file changes"),
+    button("vbg-button", "Cancel", () => exitRewind()),
+    button("vbg-button tc-rewind-go", "Rewind", () => void confirmRewind()),
+  );
+  transcriptEl.after(bar);
+  transcriptEl.classList.add("tc-rewinding");
+  rewindUi = { targets, index: targets.length - 1, bar, restore, note };
+  paintRewind();
+}
+
+function exitRewind(): void {
+  if (!rewindUi) return;
+  rewindUi.bar.remove();
+  rewindUi = null;
+  transcriptEl?.classList.remove("tc-rewinding");
+  contentEl
+    ?.querySelectorAll(".tc-rewind-drop, .tc-rewind-picked")
+    .forEach((el) => el.classList.remove("tc-rewind-drop", "tc-rewind-picked"));
+}
+
+async function confirmRewind(): Promise<void> {
+  if (!rewindUi || !selected) return;
+  const target = rewindUi.targets[rewindUi.index];
+  const restoreFiles = rewindUi.restore.checked && target.hasSnapshot;
+  const ref = selected;
+  exitRewind();
+  try {
+    const result = await api.rewindTo(ref, target.seq, restoreFiles);
+    tree = await api.getTree();
+    await select(ref);
+    // The undone prompt returns to the composer for a second try.
+    const input = paneEl.querySelector(".tc-composer-input");
+    if (input instanceof HTMLTextAreaElement) {
+      input.value = result.prompt;
+      input.focus();
+    }
+  } catch (err) {
+    console.error("rewind failed:", err);
+  }
+}
+
 export async function initWorkspace(container: HTMLElement): Promise<void> {
   tabsEl = document.getElementById("tabs")!;
   treeEl = document.getElementById("tree")!;
@@ -740,17 +873,55 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
     openEvidence(a.getAttribute("href")!);
   });
 
-  // Escape closes the effort slide-out first; otherwise it interrupts
-  // the in-flight turn for the selected session.
-  document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape") return;
-    if (effortUi?.isOpen()) {
-      e.preventDefault();
-      effortUi.close();
-      return;
-    }
-    if (selected) void api.interruptTurn(selected);
-  });
+  // Escape closes the effort slide-out first; with a turn running it
+  // interrupts; when idle, a double-tap enters rewind mode. Rewind mode
+  // owns ↑/↓/Enter/Esc — capture phase, so the composer never sees them.
+  document.addEventListener(
+    "keydown",
+    (e) => {
+      if (rewindUi) {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          exitRewind();
+        } else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+          e.preventDefault();
+          e.stopPropagation();
+          const next = rewindUi.index + (e.key === "ArrowUp" ? -1 : 1);
+          rewindUi.index = Math.min(
+            rewindUi.targets.length - 1,
+            Math.max(0, next),
+          );
+          paintRewind();
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          e.stopPropagation();
+          void confirmRewind();
+        }
+        return;
+      }
+      if (e.key !== "Escape") return;
+      if (effortUi?.isOpen()) {
+        e.preventDefault();
+        effortUi.close();
+        return;
+      }
+      if (!selected) return;
+      if (selectedIsActive()) {
+        lastEscAt = 0;
+        void api.interruptTurn(selected);
+        return;
+      }
+      const now = performance.now();
+      if (now - lastEscAt < 450) {
+        lastEscAt = 0;
+        enterRewind();
+      } else {
+        lastEscAt = now;
+      }
+    },
+    { capture: true },
+  );
 
   api.onEvent(({ ref, event }) => {
     if (!sameRef(selected, ref)) return;
@@ -770,6 +941,7 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
       partialHadText = false;
     }
     const block = eventBlock(event, true, selectedProjectPath, fadeFrom);
+    if (event.type === "user_message") block.dataset.userSeq = String(event.seq);
     // Sequential Reads collapse into one line: the newest swaps out the last.
     const prev = partialView.el.previousElementSibling;
     if (

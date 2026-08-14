@@ -26,8 +26,14 @@ import {
   readEvents,
   readSession,
   titleFromPrompt,
+  truncateEvents,
   updateSessionMeta,
 } from "./theocode/sessions";
+import {
+  restoreSnapshot,
+  rewindGrokHistory,
+  takeSnapshot,
+} from "./theocode/rewind";
 import {
   childrenOf,
   createWorktree,
@@ -875,9 +881,21 @@ ipcMain.handle(
   "workspace:send",
   (_event, ref: SessionRef, text: string) => {
     // Research subagents are agent-driven; the UI never prompts them.
-    if (readSession(ref)?.question) return readEvents(ref);
+    const session = readSession(ref);
+    if (session?.question) return readEvents(ref);
 
-    const event = appendEvent(ref, { type: "user_message", text });
+    // Stamp the prompt with a snapshot of the workdir so a later rewind can
+    // offer to restore files to exactly this moment. Null (not a git repo,
+    // snapshot failed) just means rewind won't offer file restore here.
+    const workdir =
+      session?.worktree?.path ?? getProject(ref.projectId)?.path;
+    const snapshotSha =
+      !ref.subagentId && workdir ? takeSnapshot(workdir) : null;
+    const event = appendEvent(ref, {
+      type: "user_message",
+      text,
+      ...(snapshotSha ? { snapshotSha } : {}),
+    });
     win?.webContents.send("workspace:event", { ref, event });
     // Sessions are titled by their latest prompt (grok never names them).
     updateSessionMeta(ref, { title: titleFromPrompt(text) });
@@ -901,6 +919,55 @@ ipcMain.handle("workspace:activeTurns", () => [...turnsInFlight.keys()]);
 ipcMain.handle("workspace:interrupt", (_event, ref: SessionRef) => {
   turnsInFlight.get(turnKey(ref))?.interrupt();
 });
+
+// Rewind the session to just before the user prompt at `seq`: drop that
+// prompt and everything after it from the transcript, trim the grok CLI's
+// own chat history to match (best-effort), and optionally reset the workdir
+// to the snapshot taken when that prompt was sent.
+ipcMain.handle(
+  "workspace:rewind",
+  (_event, ref: SessionRef, seq: number, restoreFiles: boolean) => {
+    if (turnsInFlight.has(turnKey(ref))) {
+      throw new Error("Cannot rewind while a turn is running.");
+    }
+    const target = readEvents(ref).find(
+      (e) => e.seq === seq && e.type === "user_message",
+    );
+    if (!target) throw new Error(`No prompt at seq ${seq} to rewind to.`);
+    const prompt = String(target.text ?? "");
+    const dropped = truncateEvents(ref, seq);
+
+    const session = readSession(ref);
+    const notes: string[] = [];
+    if (restoreFiles && typeof target.snapshotSha === "string") {
+      const workdir =
+        session?.worktree?.path ?? getProject(ref.projectId)?.path;
+      try {
+        if (!workdir) throw new Error("no working directory");
+        restoreSnapshot(workdir, target.snapshotSha);
+        notes.push("Files were restored to the state before that prompt.");
+      } catch (err) {
+        notes.push(
+          `File restore failed: ${err instanceof Error ? err.message : err}.`,
+        );
+      }
+    }
+    // Without this, --resume replays the full grok-side history and the
+    // agent "remembers" the turns the transcript no longer shows.
+    if (session?.grokSessionId && !rewindGrokHistory(session.grokSessionId, prompt)) {
+      notes.push(
+        "The agent's internal history could not be trimmed; it may still remember the undone turns.",
+      );
+    }
+    const notice = appendEvent(ref, {
+      type: "notice",
+      text: ["Rewound the session to this point.", ...notes].join(" "),
+    });
+    win?.webContents.send("workspace:event", { ref, event: notice });
+    win?.webContents.send("workspace:tree-changed");
+    return { events: [...dropped, notice], prompt };
+  },
+);
 
 // Native (macOS) context menu for a project tab. Resolves true if the
 // project was closed; closing archives it (closedAt) — data stays on disk.

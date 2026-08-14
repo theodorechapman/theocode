@@ -28,6 +28,8 @@ const workspace: WorkspaceApi = {
     ipcRenderer.invoke("workspace:send", ref, text),
   interruptTurn: (ref: SessionRef) =>
     ipcRenderer.invoke("workspace:interrupt", ref),
+  rewindTo: (ref: SessionRef, seq: number, restoreFiles: boolean) =>
+    ipcRenderer.invoke("workspace:rewind", ref, seq, restoreFiles),
   listDirectory: (path: string) =>
     ipcRenderer.invoke("workspace:listDir", path),
   projectMenu: (projectId: string) =>
