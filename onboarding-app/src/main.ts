@@ -28,7 +28,7 @@ import {
   titleFromPrompt,
   updateSessionMeta,
 } from "./theocode/sessions";
-import { createWorktree, removeWorktree } from "./theocode/worktree";
+import { childrenOf, createWorktree, removeWorktree } from "./theocode/worktree";
 import {
   MAX_QUESTION_CHARS,
   newResearchTask,
@@ -133,14 +133,43 @@ async function handleRemoveWorktree(
 ): Promise<string> {
   const project = getProject(projectId);
   if (!project) throw new Error(`Unknown project: ${projectId}`);
-  if (!label) throw new Error("Provide the worktree name (e.g. wt-2 or wt-2.1).");
+  if (!/^wt-\d+(\.\d+)?$/.test(label)) {
+    throw new Error(`Invalid worktree name "${label}" — expected wt-N or wt-N.M.`);
+  }
+
+  // Never delete a worktree out from under a running turn — including the
+  // turn that is invoking this tool.
+  const doomed = new Set([label, ...childrenOf(project.path, label)]);
+  const sessionLabel = (s: { worktree?: { label?: string; n?: number } }) =>
+    s.worktree?.label ?? (s.worktree?.n !== undefined ? `wt-${s.worktree.n}` : null);
+  for (const key of turnsInFlight.keys()) {
+    const [p, sessionId, sub] = key.split("/");
+    if (p !== projectId || sub) continue;
+    const meta = readSession({ projectId, sessionId });
+    const wt = meta ? sessionLabel(meta) : null;
+    if (wt && doomed.has(wt)) {
+      throw new Error(
+        `${label} is in use: session "${meta?.title}" has a turn running in ${wt}. Finish or interrupt that turn first.`,
+      );
+    }
+  }
+
   const removed = removeWorktree(project.path, label, cascade);
-  // Clear stale bindings so no session keeps a dead cwd.
+  const removedPaths = removed.map((name) =>
+    join(project.path, ".worktrees", name),
+  );
+  // Clear stale bindings so no session keeps a dead cwd (covering both the
+  // label shape and the legacy {n}/path-only shape).
   for (const projectNode of getTree().projects) {
     if (projectNode.project.id !== projectId) continue;
     for (const { session } of projectNode.sessions) {
-      const wtLabel = session.worktree?.label;
-      if (wtLabel && removed.includes(wtLabel)) {
+      const wt = session.worktree;
+      if (!wt) continue;
+      const byLabel = sessionLabel(session);
+      if (
+        (byLabel && removed.includes(byLabel)) ||
+        removedPaths.some((p) => wt.path === p || wt.path.startsWith(`${p}/`))
+      ) {
         updateSessionMeta(
           { projectId, sessionId: session.id },
           { worktree: undefined },

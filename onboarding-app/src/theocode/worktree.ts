@@ -8,8 +8,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
+import { portLocksDir } from "./paths";
 
 // Worktree allocation for the theocode-wt tool.
 //
@@ -35,11 +35,19 @@ export interface WorktreeInfo {
   };
 }
 
+const LABEL_RE = /^wt-\d+(\.\d+)?$/;
+
 function lockRoot(): string {
-  return (
-    process.env.THEOCODE_PORT_LOCK_DIR ??
-    join(homedir(), ".theocode", "port-locks")
-  );
+  return portLocksDir();
+}
+
+function branchExists(projectPath: string, branch: string): boolean {
+  try {
+    git(projectPath, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function git(projectPath: string, ...args: string[]): string {
@@ -63,9 +71,16 @@ function ensureIgnored(projectPath: string, entry: string): void {
   appendFileSync(path, `${content.endsWith("\n") || !content ? "" : "\n"}${entry}\n`);
 }
 
-function nextLabel(wtRoot: string, prefix: string): string {
+/** Next free label: skips labels whose directory OR branch still exists, so
+ *  a removed worktree's kept branch is never force-reset by label reuse. */
+function nextLabel(projectPath: string, wtRoot: string, prefix: string): string {
   let n = 1;
-  while (existsSync(join(wtRoot, `${prefix}${n}`))) n++;
+  while (
+    existsSync(join(wtRoot, `${prefix}${n}`)) ||
+    branchExists(projectPath, `${prefix}${n}`)
+  ) {
+    n++;
+  }
   return `${prefix}${n}`;
 }
 
@@ -105,14 +120,17 @@ export function createWorktree(
     const parentLabel = callerWt.label.split(".")[0];
     const parentDir = join(wtRoot, parentLabel);
     if (existsSync(parentDir)) {
-      label = nextLabel(wtRoot, `${parentLabel}.`);
-      baseBranch = branchOfWorktree(parentDir);
+      label = nextLabel(projectPath, wtRoot, `${parentLabel}.`);
+      // Detached HEAD (or any git hiccup) in the parent must not silently
+      // rebase the child onto the project HEAD — fall back to the branch
+      // recorded on the calling session.
+      baseBranch = branchOfWorktree(parentDir) ?? callerWt.branch;
     } else {
       // Parent worktree is gone — fall back to a fresh top-level worktree.
-      label = nextLabel(wtRoot, "wt-");
+      label = nextLabel(projectPath, wtRoot, "wt-");
     }
   } else {
-    label = nextLabel(wtRoot, "wt-");
+    label = nextLabel(projectPath, wtRoot, "wt-");
   }
 
   const branch = branchArg?.trim() || label;
@@ -196,17 +214,25 @@ export function childrenOf(projectPath: string, label: string): string[] {
   }
 }
 
+/** Release by scanning lockRoot for the claim that names this worktree —
+ *  never by trusting the agent-writable .env.ports contents. */
 function releasePortLock(dir: string): void {
   try {
-    const env = readFileSync(join(dir, ".env.ports"), "utf8");
-    const lock = env
-      .split("\n")
-      .find((l) => l.startsWith("PORT_LOCK="))
-      ?.slice("PORT_LOCK=".length)
-      .trim();
-    if (lock) rmSync(lock, { recursive: true, force: true });
+    for (const name of readdirSync(lockRoot())) {
+      const lock = join(lockRoot(), name);
+      let claim = "";
+      try {
+        claim = readFileSync(join(lock, "claim"), "utf8").trim();
+      } catch {
+        continue;
+      }
+      if (claim === dir) {
+        rmSync(lock, { recursive: true, force: true });
+        return;
+      }
+    }
   } catch {
-    // No port file — nothing to release.
+    // No lock root — nothing to release.
   }
 }
 
@@ -220,6 +246,11 @@ export function removeWorktree(
   label: string,
   cascade: boolean,
 ): string[] {
+  if (!LABEL_RE.test(label)) {
+    throw new Error(
+      `Invalid worktree name "${label}" — expected wt-N or wt-N.M.`,
+    );
+  }
   const wtRoot = join(projectPath, ".worktrees");
   if (!existsSync(join(wtRoot, label))) {
     throw new Error(`No worktree named ${label}`);

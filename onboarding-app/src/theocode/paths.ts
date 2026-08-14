@@ -36,3 +36,7 @@ export function sessionDir(
 export function dbPath(): string {
   return join(theocodeHome(), "index.db");
 }
+
+export function portLocksDir(): string {
+  return join(theocodeHome(), "port-locks");
+}

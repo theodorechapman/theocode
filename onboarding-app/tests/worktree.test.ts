@@ -10,8 +10,9 @@ let locks: string;
 
 beforeAll(() => {
   repo = mkdtempSync(join(tmpdir(), "tc-wt-repo-"));
-  locks = mkdtempSync(join(tmpdir(), "tc-wt-locks-"));
-  process.env.THEOCODE_PORT_LOCK_DIR = locks;
+  const home = mkdtempSync(join(tmpdir(), "tc-wt-home-"));
+  locks = join(home, "port-locks");
+  process.env.THEOCODE_HOME = home;
   execFileSync("git", ["-C", repo, "init", "-q"]);
   writeFileSync(join(repo, "readme.md"), "hi\n");
   execFileSync("git", ["-C", repo, "add", "-A"]);
@@ -19,7 +20,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  delete process.env.THEOCODE_PORT_LOCK_DIR;
+  delete process.env.THEOCODE_HOME;
   rmSync(repo, { recursive: true, force: true });
   rmSync(locks, { recursive: true, force: true });
 });
@@ -75,7 +76,14 @@ test("cascade removes the family, releases port blocks, keeps branches", () => {
     encoding: "utf8",
   });
   expect(branches).toContain("wt-1.1");
-  // Released blocks are reusable.
+  // Released blocks are reusable, but labels with surviving branches are
+  // not — the kept wt-1 branch must never be force-reset by label reuse.
   const next = createWorktree(repo);
   expect(next.ports.app).toBe(3100);
+  expect(next.label).toBe("wt-3");
+});
+
+test("removal rejects labels that are not wt-N or wt-N.M", () => {
+  expect(() => removeWorktree(repo, "..", false)).toThrow(/Invalid worktree name/);
+  expect(() => removeWorktree(repo, "wt-1/../..", true)).toThrow(/Invalid worktree name/);
 });
