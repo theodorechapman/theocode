@@ -1,37 +1,78 @@
 # theocode
 
-Electron setup flow that connects three services over OAuth 2.0 (authorization code + PKCE on a loopback redirect, RFC 8252). theocode wraps the local grok CLI and talks to the MCP servers itself, so each credential lands where the program that uses it actually reads it:
+Electron workspace for driving the grok CLI as an agent, plus the onboarding
+flow that connects its tools over OAuth 2.0 (authorization code + PKCE on a
+loopback redirect, RFC 8252).
 
-- **Grok CLI** — signs in at `auth.x.ai` with the grok CLI's own public client id and exact scope set, then writes the credential into `~/.grok/auth.json` in the CLI's record format. The real `grok` binary on this machine is what ends up authenticated; an existing `grok login` shows as already connected.
-- **Supabase MCP** — theocode is the MCP client here. It discovers `https://mcp.supabase.com` protected-resource metadata, dynamically registers a client (RFC 7591), requests the server's advertised scopes, and verifies the token with an authenticated JSON-RPC `initialize` against the MCP endpoint before saving it.
-- **Vercel MCP** — same discovery + dynamic registration + live verification against `https://mcp.vercel.com/`.
+## App experience
 
-MCP tokens are encrypted with Electron `safeStorage` (system keychain) and written to `userData/connections.json`. The Grok credential lives only in the CLI's own store.
+- **Sidebar** — threads organized project → agent session → subagent sessions.
+  Projects group their sessions; subagent sessions nest under the agent
+  session that spawned them.
+- **Session pane** — stubbed chat: it shows the raw session records and stores
+  sent messages, but message rendering and the agent loop are deliberately
+  unwired until rendering decisions are made.
+- **Connections** — the OAuth onboarding surface (Grok Build CLI, Supabase
+  MCP, Vercel MCP), reachable from the sidebar footer. Grok credentials are
+  written to the CLI's own store (`~/.grok/auth.json`); MCP tokens are
+  encrypted with Electron `safeStorage`.
 
-## Stack
+## Storage
 
-TypeScript everywhere, built and managed with **Bun**; Electron runs the bundled output from `dist/`. The UI follows the design philosophy in `../design.md` (Geist foundation stylesheet, light/dark, fixed viewport with no scrolling).
+Sessions live under `~/.theocode` (override with `THEOCODE_HOME`). The
+filesystem is the source of truth — raw JSON metadata plus append-only jsonl
+transcripts — mirrored into sqlite (`index.db`, via sql.js) for later querying:
+
+```
+projects/<projectId>/project.json
+projects/<projectId>/sessions/<sessionId>/{session.json, events.jsonl}
+projects/<projectId>/sessions/<sessionId>/subagents/<subId>/{session.json, events.jsonl}
+index.db
+```
+
+## Agent
+
+`src/theocode/agent.ts` builds the headless grok invocation for a turn:
+connected MCP servers (with stored tokens) are written per-session to
+`mcp.json`, and the system prompt is read from `prompts/system-prompt.md`
+(intentionally blank — Theo writes it). Spawning/streaming is not wired yet.
 
 ## Run
 
 ```sh
 bun install
-bun run start      # builds main, preload, and renderer, then launches Electron
+bun run start      # builds, then launches through scripts/dev.mjs
 ```
 
+`scripts/dev.mjs` gives each running instance an exclusive port block
+(43000+10n, lock files in `~/.theocode/dev-locks`) and a suffixed Electron
+userData dir, so several agents can run the app from parallel worktrees
+without colliding. Env it exports: `THEOCODE_INSTANCE`, `THEOCODE_PORT_BASE`,
+`THEOCODE_AGENT_PORT`, `THEOCODE_DEV_PORT`.
+
 Other scripts: `bun run typecheck`, `bun run build`.
+
+Dev helpers: `THEOCODE_SCREENSHOT=/path/out.png` captures the window and
+quits; `THEOCODE_DEMO=1` seeds a demo tree when the store is empty (point
+`THEOCODE_HOME` somewhere disposable).
 
 ## Layout
 
 ```
 src/
-  main.ts        Electron main process, IPC, window
-  preload.ts     contextBridge API (window.onboarding)
-  oauth.ts       OAuth engine: discovery → DCR → PKCE → loopback callback → token exchange → MCP verify
-  providers.ts   the three provider configs
-  grok.ts        read/write the grok CLI's ~/.grok/auth.json credential store
-  store.ts       safeStorage-encrypted token store for MCP connections
-  renderer/      index.html, app.css, renderer.ts, assets/vercel-brand.css
+  main.ts             Electron main process, IPC, window
+  preload.ts          contextBridge APIs (window.onboarding, window.workspace)
+  oauth.ts            OAuth engine: discovery → DCR → PKCE → loopback → tokens
+  providers.ts        the three provider configs
+  grok.ts             hand-off into the grok CLI's credential store
+  store.ts            safeStorage-encrypted MCP token store
+  theocode/
+    paths.ts          ~/.theocode layout
+    sessions.ts       filesystem session store (source of truth)
+    db.ts             sqlite mirror (sql.js)
+    agent.ts          grok invocation builder (MCP config + system prompt)
+    types.ts          workspace types + renderer API
+  renderer/           app shell: sidebar tree, session pane, connections view
+scripts/dev.mjs       per-instance port/userData allocator + launcher
+prompts/system-prompt.md   agent system prompt (blank on purpose)
 ```
-
-Setting `THEOCODE_SCREENSHOT=/path/out.png` captures the window to a PNG and quits (used for design review).

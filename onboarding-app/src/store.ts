@@ -51,6 +51,21 @@ export function getConnections(): Partial<Record<ProviderId, ConnectionInfo>> {
   return out;
 }
 
+/** Decrypts and returns a provider's saved tokens, or null when not connected. */
+export function getTokens(providerId: ProviderId): TokenSet | null {
+  const conn = readStore()[providerId];
+  if (!conn) return null;
+  try {
+    const buf = Buffer.from(conn.tokens, "base64");
+    const json = conn.encrypted
+      ? safeStorage.decryptString(buf)
+      : buf.toString("utf8");
+    return JSON.parse(json) as TokenSet;
+  } catch {
+    return null;
+  }
+}
+
 export function removeConnection(providerId: ProviderId): void {
   const store = readStore();
   delete store[providerId];
