@@ -1,6 +1,6 @@
-import { spawn } from "node:child_process";
-import { appendFileSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync, spawn } from "node:child_process";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
 import {
   ensureFolderTrusted,
   grokBinary,
@@ -70,13 +70,55 @@ function ensureGrokDirIgnored(projectPath: string): void {
  * ones are removed. Project scope (not user scope) so the MCP surface exists
  * only inside theocode projects, not in every grok session on the machine.
  */
-async function syncProjectMcp(project: ProjectInfo): Promise<void> {
+/** For worktrees: hide .grok/ via the shared .git/info/exclude instead of the
+ *  branch-tracked .gitignore, so registering tools never dirties the tree. */
+function ensureGrokDirExcluded(dir: string): void {
+  try {
+    const common = execFileSync(
+      "git",
+      ["-C", dir, "rev-parse", "--git-common-dir"],
+      { encoding: "utf8" },
+    ).trim();
+    const gitDir = isAbsolute(common) ? common : join(dir, common);
+    const path = join(gitDir, "info", "exclude");
+    let content = "";
+    try {
+      content = readFileSync(path, "utf8");
+    } catch {
+      // No exclude file yet.
+    }
+    if (content.split("\n").some((l) => l.trim().replace(/\/$/, "") === ".grok")) {
+      return;
+    }
+    mkdirSync(join(gitDir, "info"), { recursive: true });
+    appendFileSync(
+      path,
+      `${content.endsWith("\n") || !content ? "" : "\n"}.grok/\n`,
+    );
+  } catch {
+    // Not a git checkout — nothing to exclude.
+  }
+}
+
+/**
+ * `workDir` is where the turn actually runs (the session's worktree once it
+ * has one) — grok resolves repo-local MCP config against that directory, so
+ * the registration has to live there, not just in the main checkout.
+ */
+async function syncProjectMcp(
+  project: ProjectInfo,
+  workDir: string,
+): Promise<void> {
   const proxy = getActiveProxy();
   if (!proxy) return;
-  const projectPath = project.path;
+  const projectPath = workDir;
   try {
     ensureFolderTrusted(projectPath);
-    ensureGrokDirIgnored(projectPath);
+    if (projectPath === project.path) {
+      ensureGrokDirIgnored(projectPath);
+    } else {
+      ensureGrokDirExcluded(projectPath);
+    }
     // Shelling out to `grok mcp` costs seconds; read the config first and
     // only exec when the desired state differs.
     let config = "";
@@ -119,7 +161,7 @@ export async function runAgentTurn(
   prompt: string,
   sinks: TurnSinks,
 ): Promise<void> {
-  await syncProjectMcp(project);
+  await syncProjectMcp(project, session.worktree?.path ?? project.path);
   const invocation = buildAgentInvocation(project, session, prompt);
   const child = spawn(grokBinary(), invocation.args, {
     cwd: invocation.cwd,

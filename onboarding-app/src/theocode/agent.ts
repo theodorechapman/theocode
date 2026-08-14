@@ -40,16 +40,19 @@ export function buildAgentInvocation(
   const sessionArgs = session.grokSessionId
     ? ["--resume", session.grokSessionId]
     : ["--session-id", session.id];
+  // Once a session has moved itself into a worktree (theocode-wt), every
+  // later turn runs there instead of the main checkout.
+  const cwd = session.worktree?.path ?? project.path;
   const args = [
     "--output-format",
     "streaming-json",
     "--cwd",
-    project.path,
+    cwd,
     ...sessionArgs,
     "-p",
     prompt,
   ];
   const rules = extraRules();
   if (rules) args.push("--rules", rules);
-  return { command: "grok", args, cwd: project.path };
+  return { command: "grok", args, cwd };
 }
