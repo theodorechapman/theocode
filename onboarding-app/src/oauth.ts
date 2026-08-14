@@ -33,6 +33,31 @@ export interface OAuthOutcome {
   expiresAt?: string;
   /** Merged claims: access-token JWT + id_token + userinfo response. */
   claims: Record<string, unknown>;
+  /** The client the tokens belong to, kept so refresh keeps working. */
+  client: { clientId: string; clientSecret?: string; tokenEndpoint: string };
+  /** Upstream MCP endpoint (RFC 8707 resource) when this is an MCP provider. */
+  resource?: string;
+}
+
+export async function refreshTokens(
+  tokenEndpoint: string,
+  clientId: string,
+  clientSecret: string | undefined,
+  refreshToken: string,
+): Promise<TokenSet> {
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: clientId,
+  });
+  if (clientSecret) body.set("client_secret", clientSecret);
+  const tokens = await fetchJson<TokenSet>(tokenEndpoint, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: body.toString(),
+  });
+  if (!tokens.access_token) throw new Error("Refresh response had no access token");
+  return tokens;
 }
 
 const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
@@ -297,7 +322,15 @@ export async function runOAuthFlow(
       ? new Date(Date.now() + tokens.expires_in * 1000).toISOString()
       : undefined;
 
-    return { tokens, account, scopes: tokens.scope ?? scopes, expiresAt, claims };
+    return {
+      tokens,
+      account,
+      scopes: tokens.scope ?? scopes,
+      expiresAt,
+      claims,
+      client: { clientId, clientSecret, tokenEndpoint: meta.token_endpoint },
+      resource,
+    };
   } finally {
     server.close();
   }

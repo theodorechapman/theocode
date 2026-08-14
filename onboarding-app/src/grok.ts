@@ -1,7 +1,11 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { OAuthOutcome } from "./oauth";
+
+const execFileAsync = promisify(execFile);
 
 // The grok CLI reads its credentials from ~/.grok/auth.json, keyed by
 // "<issuer>::<client_id>". theocode signs in with the CLI's own public client
@@ -89,4 +93,41 @@ export function removeGrokCliAuth(issuer: string, clientId: string): void {
   const data = readAuthFile();
   delete data[entryKey(issuer, clientId)];
   writeAuthFile(data);
+}
+
+function grokBinary(): string {
+  const installed = join(GROK_DIR, "bin", "grok");
+  return existsSync(installed) ? installed : "grok";
+}
+
+/**
+ * Registers a theocode proxy route as an MCP server in the grok CLI's user
+ * config (`grok mcp add` is add-or-update, so re-running after a port change
+ * rewrites the URL).
+ */
+export async function registerProxyWithGrok(
+  name: string,
+  url: string,
+  localSecret: string,
+): Promise<void> {
+  await execFileAsync(grokBinary(), [
+    "mcp",
+    "add",
+    name,
+    url,
+    "--transport",
+    "http",
+    "--scope",
+    "user",
+    "--header",
+    `Authorization: Bearer ${localSecret}`,
+  ]);
+}
+
+export async function unregisterProxyFromGrok(name: string): Promise<void> {
+  try {
+    await execFileAsync(grokBinary(), ["mcp", "remove", name, "--scope", "user"]);
+  } catch {
+    // Not registered — nothing to remove.
+  }
 }

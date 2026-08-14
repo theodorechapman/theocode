@@ -9,7 +9,8 @@
     "build:renderer": "bun build src/renderer/renderer.ts --outdir dist/renderer --target browser && cp src/renderer/index.html src/renderer/app.css dist/renderer/ && cp -R src/renderer/assets dist/renderer/",
     "build": "bun run build:main && bun run build:renderer",
     "start": "bun run build && electron .",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
