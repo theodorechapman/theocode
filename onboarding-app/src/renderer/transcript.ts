@@ -379,6 +379,14 @@ export function eventBlock(
     }
     case "notice":
       return metaLine(String(rest.text ?? ""), animate);
+    case "code_result": {
+      const block = fade(h("article", "tc-msg tc-msg-research"), animate);
+      block.append(
+        h("p", "tc-msg-label", "Task result"),
+        ...markdownBlocks(String(rest.text ?? "")),
+      );
+      return block;
+    }
     case "research_result": {
       const block = fade(h("article", "tc-msg tc-msg-research"), animate);
       block.append(

@@ -30,6 +30,17 @@ import {
 } from "./theocode/sessions";
 import { childrenOf, createWorktree, removeWorktree } from "./theocode/worktree";
 import {
+  codeResultText,
+  codeTasks,
+  coderPrompt,
+  DEFAULT_PARALLEL,
+  newCodeTask,
+  pendingCodeFor,
+  queuedCodeFor,
+  runningCodeCountFor,
+  validateCards,
+} from "./theocode/coding";
+import {
   MAX_QUESTION_CHARS,
   newResearchTask,
   pendingFor,
@@ -89,16 +100,48 @@ function activeTurnRef(projectId: string): SessionRef | null {
   return null;
 }
 
+/** Exact caller resolution: worktree labels bind 1:1 to sessions. */
+function sessionByWorktreeLabel(
+  projectId: string,
+  label: string,
+): SessionRef | null {
+  for (const node of getTree().projects) {
+    if (node.project.id !== projectId) continue;
+    for (const { session, subagents } of node.sessions) {
+      const match = (m: { worktree?: { label?: string; n?: number } }) =>
+        (m.worktree?.label ?? (m.worktree?.n !== undefined ? `wt-${m.worktree.n}` : null)) === label;
+      if (match(session)) return { projectId, sessionId: session.id };
+      for (const sub of subagents) {
+        if (match(sub)) {
+          return { projectId, sessionId: session.id, subagentId: sub.id };
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Prefer the exact per-workdir identity; fall back to the in-flight guess
+ *  (only main-checkout sessions still need the guess). */
+function callerRef(projectId: string, callerLabel?: string): SessionRef | null {
+  if (callerLabel) {
+    const exact = sessionByWorktreeLabel(projectId, callerLabel);
+    if (exact) return exact;
+  }
+  return activeTurnRef(projectId);
+}
+
 async function handleCreateWorktree(
   projectId: string,
-  branch?: string,
+  branch: string | undefined,
+  callerLabel?: string,
 ): Promise<string> {
   const project = getProject(projectId);
   if (!project) throw new Error(`Unknown project: ${projectId}`);
   // Hierarchy is inferred from the calling session: inside wt-N you get
   // children wt-N.M (branched from wt-N's branch); inside a child you get
   // siblings. Two levels is a hard limit.
-  const ref = activeTurnRef(projectId);
+  const ref = callerRef(projectId, callerLabel);
   const callerWt = ref ? readSession(ref)?.worktree : undefined;
   const info = createWorktree(
     project.path,
@@ -270,10 +313,76 @@ async function startProxyAndSync(): Promise<void> {
             },
           },
         ],
-        call: (projectId, name, args) =>
+        call: (projectId, name, args, caller) =>
           name === "theocode-research"
-            ? handleResearchStart(projectId, args)
+            ? handleResearchStart(projectId, args, caller)
             : Promise.resolve(handleResearchPoll(projectId, args)),
+      },
+      code: {
+        serverName: "theocode-code",
+        tools: [
+          {
+            name: "theocode-code",
+            description:
+              "Fan out coding subagents, one per task card, each in its own child worktree branched from yours. A card is a self-contained contract: goal (one sentence), spec, files_in_scope, done_criteria. notes_for_merge is private to you — the subagent NEVER sees it; it returns with the result. Returns immediately; poll with theocode-code-poll, or results interrupt you with a merge playbook after your turn ends.",
+            inputSchema: {
+              type: "object",
+              required: ["cards"],
+              properties: {
+                cards: {
+                  type: "array",
+                  description: "Task cards (max 8).",
+                  items: {
+                    type: "object",
+                    required: ["goal", "spec", "files_in_scope", "done_criteria"],
+                    properties: {
+                      goal: { type: "string", description: "One sentence." },
+                      spec: {
+                        type: "string",
+                        description: "The contract: what to build, interfaces, behavior.",
+                      },
+                      files_in_scope: {
+                        type: "array",
+                        items: { type: "string" },
+                        description: "Paths the task may modify.",
+                      },
+                      done_criteria: {
+                        type: "array",
+                        items: { type: "string" },
+                        description: "Verifiable checks.",
+                      },
+                      notes_for_merge: {
+                        type: "string",
+                        description:
+                          "Private integration context, held back from the subagent.",
+                      },
+                    },
+                  },
+                },
+                parallel: {
+                  type: "number",
+                  description: "Max concurrent subagents (default 3).",
+                },
+              },
+            },
+          },
+          {
+            name: "theocode-code-poll",
+            description:
+              "Check a code task. Returns the result and merge playbook when finished, or its running status.",
+            inputSchema: {
+              type: "object",
+              required: ["id"],
+              properties: {
+                id: { type: "string", description: "The code task id." },
+              },
+            },
+          },
+        ],
+        call: (projectId, name, args, caller) =>
+          name === "theocode-code"
+            ? handleCodeStart(projectId, args, caller)
+            : Promise.resolve(handleCodePoll(projectId, args)),
       },
     },
     getCredentials: (providerId) => {
@@ -292,6 +401,8 @@ async function startProxyAndSync(): Promise<void> {
       updateTokens(providerId as ProviderId, tokens),
   });
   setActiveProxy(proxy.port, proxySecret);
+  // Dev/tooling convenience: the actual bound port, next to the secret.
+  writeFileSync(join(app.getPath("userData"), "proxy-port"), String(proxy.port));
   // Registration is now per-project (turn.ts syncProjectMcp); drop any
   // user-scope entries left behind by earlier versions.
   await Promise.all(
@@ -459,12 +570,14 @@ function turnSinks(extra?: Partial<TurnSinks>): TurnSinks {
 
 // research sub-turn key -> research task id, so onTurnFinished can finalize.
 const researchTurnKeys = new Map<string, string>();
+// code sub-turn key -> code task id.
+const codeTurnKeys = new Map<string, string>();
 
 /** Starts a turn unless the session is busy. Returns whether it started. */
 function startTurn(
   ref: SessionRef,
   prompt: string,
-  opts?: { research?: boolean },
+  opts?: { research?: boolean; coding?: boolean },
 ): boolean {
   const key = turnKey(ref);
   if (turnsInFlight.has(key)) return false;
@@ -482,20 +595,26 @@ function startTurn(
         onTurnFinished(ref, code);
       },
     }),
-    { research: opts?.research },
+    { research: opts?.research, coding: opts?.coding },
   );
   trackTurn(key, handle);
   return true;
 }
 
 function onTurnFinished(ref: SessionRef, code: number | null): void {
-  const taskId = researchTurnKeys.get(turnKey(ref));
-  if (taskId) {
+  const researchId = researchTurnKeys.get(turnKey(ref));
+  if (researchId) {
     researchTurnKeys.delete(turnKey(ref));
-    finalizeResearch(taskId, code);
+    finalizeResearch(researchId, code);
     return;
   }
-  deliverPendingResearch(ref);
+  const codeId = codeTurnKeys.get(turnKey(ref));
+  if (codeId) {
+    codeTurnKeys.delete(turnKey(ref));
+    finalizeCodeTask(codeId, code);
+    return;
+  }
+  deliverPendingAsync(ref);
 }
 
 function finalizeResearch(taskId: string, code: number | null): void {
@@ -503,26 +622,64 @@ function finalizeResearch(taskId: string, code: number | null): void {
   if (!task) return;
   task.report = reportFromEvents(readEvents(task.subRef)) ?? undefined;
   task.status = code === 0 ? "done" : "failed";
-  if (task.parentRef) deliverPendingResearch(task.parentRef);
+  if (task.parentRef) deliverPendingAsync(task.parentRef);
 }
 
-/** The interrupt: once the parent is idle, unclaimed reports start a turn. */
-function deliverPendingResearch(parentRef: SessionRef): void {
+function finalizeCodeTask(taskId: string, code: number | null): void {
+  const task = codeTasks.get(taskId);
+  if (!task || !task.subRef) return;
+  task.result = reportFromEvents(readEvents(task.subRef)) ?? undefined;
+  task.status = code === 0 && task.result ? "done" : "failed";
+  // A slot freed up — start the next queued card for this coordinator.
+  launchQueuedCodeTasks(task.parentRef);
+  deliverPendingAsync(task.parentRef);
+}
+
+function launchQueuedCodeTasks(parentRef: SessionRef): void {
+  const project = getProject(parentRef.projectId);
+  if (!project) return;
+  for (const task of queuedCodeFor(parentRef)) {
+    if (runningCodeCountFor(parentRef) >= task.parallelLimit) break;
+    try {
+      launchCodeTask(project, task);
+    } catch (err) {
+      task.status = "failed";
+      task.result = `Failed to launch: ${err instanceof Error ? err.message : err}`;
+    }
+  }
+}
+
+/** The interrupt: once the parent is idle, unclaimed research reports and
+ *  finished code tasks start a turn together. */
+function deliverPendingAsync(parentRef: SessionRef): void {
   if (turnsInFlight.has(turnKey(parentRef))) return;
-  const pending = pendingFor(parentRef);
-  if (pending.length === 0) return;
-  const text = pending.map(resultText).join("\n\n---\n\n");
-  for (const task of pending) task.claimed = true;
-  const event = appendEvent(parentRef, { type: "research_result", text });
-  win?.webContents.send("workspace:event", { ref: parentRef, event });
-  if (!startTurn(parentRef, text)) {
-    for (const task of pending) task.claimed = false;
+  const research = pendingFor(parentRef);
+  const code = pendingCodeFor(parentRef);
+  if (research.length === 0 && code.length === 0) return;
+  const parts: string[] = [];
+  for (const task of research) {
+    task.claimed = true;
+    const text = resultText(task);
+    parts.push(text);
+    const event = appendEvent(parentRef, { type: "research_result", text });
+    win?.webContents.send("workspace:event", { ref: parentRef, event });
+  }
+  for (const task of code) {
+    task.claimed = true;
+    const text = codeResultText(task);
+    parts.push(text);
+    const event = appendEvent(parentRef, { type: "code_result", text });
+    win?.webContents.send("workspace:event", { ref: parentRef, event });
+  }
+  if (!startTurn(parentRef, parts.join("\n\n---\n\n"))) {
+    for (const task of [...research, ...code]) task.claimed = false;
   }
 }
 
 async function handleResearchStart(
   projectId: string,
   args: Record<string, unknown>,
+  callerLabel?: string,
 ): Promise<string> {
   const question = String(args.question ?? "").trim();
   const hypothesis =
@@ -538,7 +695,7 @@ async function handleResearchStart(
   const project = getProject(projectId);
   if (!project) throw new Error(`Unknown project: ${projectId}`);
 
-  const parentRef = activeTurnRef(projectId);
+  const parentRef = callerRef(projectId, callerLabel);
   const sub = createSession(
     project.id,
     parentRef?.sessionId,
@@ -580,6 +737,102 @@ function handleResearchPoll(
   }
   task.claimed = true;
   return resultText(task);
+}
+
+function launchCodeTask(project: ReturnType<typeof getProject> & object, task: import("./theocode/coding").CodeTask): void {
+  const parentMeta = readSession(task.parentRef);
+  const parentWt = parentMeta?.worktree;
+  const parentLabel =
+    parentWt?.label ?? (parentWt?.n !== undefined ? `wt-${parentWt.n}` : undefined);
+  const info = createWorktree(
+    project.path,
+    undefined,
+    parentLabel && parentWt
+      ? { label: parentLabel, branch: parentWt.branch }
+      : undefined,
+  );
+  const sub = createSession(
+    project.id,
+    task.parentRef.sessionId,
+    task.card.goal.length > 60 ? `${task.card.goal.slice(0, 57)}…` : task.card.goal,
+  );
+  const subRef: SessionRef = {
+    projectId: project.id,
+    sessionId: task.parentRef.sessionId,
+    subagentId: sub.id,
+  };
+  updateSessionMeta(subRef, {
+    worktree: { label: info.label, branch: info.branch, path: info.path },
+  });
+  task.subRef = subRef;
+  task.wtLabel = info.label;
+  task.branch = info.branch;
+  task.wtPath = info.path;
+  task.status = "running";
+  const prompt = coderPrompt(task.card);
+  const event = appendEvent(subRef, { type: "user_message", text: prompt });
+  win?.webContents.send("workspace:event", { ref: subRef, event });
+  win?.webContents.send("workspace:tree-changed");
+  codeTurnKeys.set(turnKey(subRef), task.id);
+  if (!startTurn(subRef, prompt, { coding: true })) {
+    codeTurnKeys.delete(turnKey(subRef));
+    task.status = "failed";
+    task.result = "Could not start the coding subagent";
+  }
+}
+
+async function handleCodeStart(
+  projectId: string,
+  args: Record<string, unknown>,
+  callerLabel?: string,
+): Promise<string> {
+  const project = getProject(projectId);
+  if (!project) throw new Error(`Unknown project: ${projectId}`);
+  const cards = validateCards(args.cards);
+  const parallel = Math.max(
+    1,
+    Math.min(8, Number(args.parallel) || DEFAULT_PARALLEL),
+  );
+  const parentRef = callerRef(projectId, callerLabel);
+  if (!parentRef) {
+    throw new Error("Could not identify the calling session for this fan-out.");
+  }
+  const parentMeta = readSession(parentRef);
+  const parentWt = parentMeta?.worktree;
+  const mergeTarget = parentWt
+    ? {
+        path: parentWt.path,
+        label: parentWt.label ?? (parentWt.n !== undefined ? `wt-${parentWt.n}` : null),
+      }
+    : { path: project.path, label: null };
+
+  const tasks = cards.map((card) =>
+    newCodeTask(parentRef, mergeTarget, card, parallel),
+  );
+  launchQueuedCodeTasks(parentRef);
+  const launched = tasks.filter((t) => t.status === "running").length;
+  return [
+    `${tasks.length} code task(s) created: ${tasks.map((t) => `${t.id} ("${t.card.goal.slice(0, 50)}")`).join(", ")}.`,
+    `${launched} running now (parallel cap ${parallel}), the rest start as slots free up.`,
+    `Each runs in its own child worktree branched from ${mergeTarget.label ?? "the main checkout"}; subagents see only their card.`,
+    `Keep working. Poll with theocode-code-poll {"id": "<id>"}, or results will interrupt you with a merge playbook after your turn ends.`,
+  ].join(" ");
+}
+
+function handleCodePoll(
+  projectId: string,
+  args: Record<string, unknown>,
+): string {
+  const id = String(args.id ?? "");
+  const task = codeTasks.get(id);
+  if (!task || task.parentRef.projectId !== projectId) {
+    throw new Error(`Unknown code task id: ${id}`);
+  }
+  if (task.status === "queued" || task.status === "running") {
+    return `Code task ${id} is ${task.status}${task.wtLabel ? ` in ${task.wtLabel}` : ""}. Keep working and poll again later, or finish your turn and it will interrupt you.`;
+  }
+  task.claimed = true;
+  return codeResultText(task);
 }
 
 ipcMain.handle(

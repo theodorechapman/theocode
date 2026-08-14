@@ -27,6 +27,11 @@ export function researchRules(): string {
   return readPrompt("research-rules.md");
 }
 
+/** Rules for coding subagents: one card, one worktree, commit before finish. */
+export function codingRules(): string {
+  return readPrompt("coding-rules.md");
+}
+
 // Researchers are structurally read-only: no terminal, no edits, no
 // worktrees, no subagents. search_tool/use_tool stay, so read-only MCP
 // surfaces remain reachable.
@@ -47,7 +52,7 @@ export function buildAgentInvocation(
   project: ProjectInfo,
   session: SessionMeta,
   prompt: string,
-  opts?: { research?: boolean },
+  opts?: { research?: boolean; coding?: boolean },
 ): AgentInvocation {
   const sessionArgs = session.grokSessionId
     ? ["--resume", session.grokSessionId]
@@ -65,7 +70,11 @@ export function buildAgentInvocation(
     prompt,
   ];
   if (opts?.research) args.push("--tools", RESEARCH_TOOLS);
-  const rules = opts?.research ? researchRules() : extraRules();
+  const rules = opts?.research
+    ? researchRules()
+    : opts?.coding
+      ? codingRules()
+      : extraRules();
   if (rules) args.push("--rules", rules);
   return { command: "grok", args, cwd };
 }
