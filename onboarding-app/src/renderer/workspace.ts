@@ -33,6 +33,96 @@ let contentEl: HTMLElement | null = null;
 let partialView: PartialView | null = null;
 let partialHadText = false;
 let selectedProjectPath: string | undefined;
+let composerRipple: HTMLElement | null = null;
+
+const PROJECT_TONES = [
+  "sky",
+  "mint",
+  "peach",
+  "lilac",
+  "butter",
+  "rose",
+  "aqua",
+  "iris",
+] as const;
+
+function projectTone(id: string): (typeof PROJECT_TONES)[number] {
+  let hash = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    hash ^= id.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return PROJECT_TONES[(hash >>> 0) % PROJECT_TONES.length];
+}
+
+function isResearch(meta: SessionMeta | undefined): boolean {
+  return Boolean(meta?.question);
+}
+
+function isResearchPrompt(event: SessionEvent): boolean {
+  return (
+    event.type === "user_message" &&
+    typeof event.text === "string" &&
+    event.text.startsWith("Research question:\n\n")
+  );
+}
+
+function turnKeyOf(ref: SessionRef): string {
+  return `${ref.projectId}/${ref.sessionId}/${ref.subagentId ?? ""}`;
+}
+
+function selectedIsActive(): boolean {
+  return selected !== null && activeTurnKeys.has(turnKeyOf(selected));
+}
+
+function makeRipple(opts?: { research?: boolean; idle?: boolean }): HTMLElement {
+  const ripple = h("span", "tc-ripple", h("span"), h("span"), h("span"));
+  if (opts?.research) ripple.classList.add("tc-ripple-research");
+  if (opts?.idle) ripple.classList.add("is-idle");
+  ripple.setAttribute("role", "img");
+  ripple.setAttribute("aria-label", "Turn running");
+  return ripple;
+}
+
+function eyeglassIcon(): HTMLElement {
+  const wrap = h("span", "tc-tree-research-icon");
+  wrap.setAttribute("role", "img");
+  wrap.setAttribute("aria-label", "Research");
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("aria-hidden", "true");
+  const mark = (tag: string, attrs: Record<string, string>) => {
+    const el = document.createElementNS("http://www.w3.org/2000/svg", tag);
+    for (const [key, value] of Object.entries(attrs)) el.setAttribute(key, value);
+    return el;
+  };
+  svg.append(
+    mark("circle", {
+      cx: "7",
+      cy: "7",
+      r: "4.1",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "1.4",
+    }),
+    mark("path", {
+      d: "M10.1 10.1L14 14",
+      fill: "none",
+      stroke: "currentColor",
+      "stroke-width": "1.6",
+      "stroke-linecap": "round",
+    }),
+  );
+  wrap.append(svg);
+  return wrap;
+}
+
+function syncComposerRipple(): void {
+  if (!composerRipple) return;
+  composerRipple.classList.toggle("is-idle", !selectedIsActive());
+}
 
 // --- Streaming scroll -------------------------------------------------------
 //
@@ -101,7 +191,7 @@ async function createProjectFlow(): Promise<void> {
 
 function renderTabs(): void {
   const tabs = tree.projects.map(({ project, sessions }) => {
-    const tab = button("tc-tab", project.name, async () => {
+    const tab = button("tc-tab", "", async () => {
       if (activeProjectId === project.id && selected) return;
       activeProjectId = project.id;
       const first = sessions[0]?.session;
@@ -109,6 +199,8 @@ function renderTabs(): void {
         first ? { projectId: project.id, sessionId: first.id } : null,
       );
     });
+    tab.dataset.tone = projectTone(project.id);
+    tab.append(h("span", "tc-tab-swatch"), h("span", "tc-tab-name", project.name));
     tab.title = project.path;
     if (project.id === activeProjectId) tab.setAttribute("aria-current", "true");
     // Two-finger click: native context menu with "Close project".
@@ -146,15 +238,10 @@ function sessionRow(
   const row = button("tc-tree-row", "", () => select(ref));
   row.classList.add(`tc-tree-${kind}`);
   if (sameRef(selected, ref)) row.setAttribute("aria-current", "true");
-  const active = activeTurnKeys.has(
-    `${ref.projectId}/${ref.sessionId}/${ref.subagentId ?? ""}`,
-  );
-  if (active) {
-    const ripple = h("span", "tc-ripple", h("span"), h("span"), h("span"));
-    ripple.setAttribute("role", "img");
-    ripple.setAttribute("aria-label", "Turn running");
-    row.append(ripple);
-  }
+  const research = isResearch(meta);
+  if (research) row.dataset.kind = "research";
+  const active = activeTurnKeys.has(turnKeyOf(ref));
+  if (active) row.append(makeRipple({ research }));
   row.append(
     h("span", "tc-tree-title", meta.title),
     ...(meta.worktree
@@ -166,7 +253,11 @@ function sessionRow(
           ),
         ]
       : []),
-    ...(kind === "subagent" ? [h("span", "tc-tree-badge", "subagent")] : []),
+    ...(research
+      ? [eyeglassIcon()]
+      : kind === "subagent"
+        ? [h("span", "tc-tree-badge", "subagent")]
+        : []),
   );
   return row;
 }
@@ -272,6 +363,7 @@ function renderPane(): void {
   lenisRaf = 0;
   transcriptEl = null;
   contentEl = null;
+  composerRipple = null;
   partialView = null;
   partialHadText = false;
   turnAnchorEl = null;
@@ -298,22 +390,6 @@ function renderPane(): void {
 
   const { session, project, projectPath } = findMeta(selected);
   selectedProjectPath = projectPath;
-  const header = h(
-    "header",
-    "tc-pane-head",
-    h(
-      "div",
-      "tc-pane-title-group",
-      h("h1", "tc-pane-title", session?.title ?? "Session"),
-      h(
-        "p",
-        "tc-pane-context",
-        [project, selected.subagentId ? "subagent session" : "agent session"]
-          .filter(Boolean)
-          .join(" · "),
-      ),
-    ),
-  );
 
   // Research subagents pin their question above the scrolling transcript.
   // Older sessions without the metadata fall back to parsing the first prompt.
@@ -325,6 +401,30 @@ function renderPane(): void {
     );
     if (match) question = match[1];
   }
+  const research = Boolean(question);
+  const header = h(
+    "header",
+    "tc-pane-head",
+    h(
+      "div",
+      "tc-pane-title-group",
+      h("h1", "tc-pane-title", session?.title ?? "Session"),
+      h(
+        "p",
+        "tc-pane-context",
+        [
+          project,
+          research
+            ? "research"
+            : selected.subagentId
+              ? "subagent session"
+              : "agent session",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      ),
+    ),
+  );
   const banner = question
     ? h(
         "div",
@@ -346,6 +446,7 @@ function renderPane(): void {
     );
   } else {
     for (const e of events) {
+      if (research && isResearchPrompt(e)) continue;
       const block = eventBlock(e, false, selectedProjectPath);
       // Historical load: land anchored on the last significant block.
       if (e.type === "agent_message") {
@@ -388,45 +489,50 @@ function renderPane(): void {
     { passive: true },
   );
 
-  const input = h("textarea", "tc-composer-input") as HTMLTextAreaElement;
-  input.rows = 2;
-  input.placeholder = "Message the agent…";
-  const send = button("vbg-button", "Send", async () => {
-    const text = input.value.trim();
-    if (!text || !selected) return;
-    input.value = "";
-    await api.sendMessage(selected, text);
-    // The session takes its title from the latest prompt — refresh the
-    // sidebar and patch the header in place (no pane rebuild mid-turn).
-    tree = await api.getTree();
-    renderTree();
-    const title = findMeta(selected).session?.title;
-    const titleEl = paneEl.querySelector(".tc-pane-title");
-    if (title && titleEl) titleEl.textContent = title;
-  });
-  input.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send.click();
-    }
-  });
-  const composer = h(
-    "footer",
-    "tc-composer",
-    h("div", "tc-composer-row", input, send),
-    h(
-      "p",
-      "vbg-caption",
-      "Enter to send. Shift+Enter for a new line. Esc to interrupt.",
-    ),
-  );
+  // Research subagents are agent-driven; the UI never offers a prompt.
+  let composer: HTMLElement | null = null;
+  if (!research) {
+    const input = h("textarea", "tc-composer-input") as HTMLTextAreaElement;
+    input.rows = 2;
+    input.placeholder = "Message the agent…";
+    const send = button("vbg-button", "Send", async () => {
+      const text = input.value.trim();
+      if (!text || !selected) return;
+      input.value = "";
+      await api.sendMessage(selected, text);
+      // The session takes its title from the latest prompt — refresh the
+      // sidebar and patch the header in place (no pane rebuild mid-turn).
+      tree = await api.getTree();
+      renderTree();
+      const title = findMeta(selected).session?.title;
+      const titleEl = paneEl.querySelector(".tc-pane-title");
+      if (title && titleEl) titleEl.textContent = title;
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        send.click();
+      }
+    });
+    composerRipple = makeRipple({ idle: !selectedIsActive() });
+    composer = h(
+      "footer",
+      "tc-composer",
+      h("div", "tc-composer-row", input, h("div", "tc-composer-send", composerRipple, send)),
+      h(
+        "p",
+        "vbg-caption",
+        "Enter to send. Shift+Enter for a new line. Esc to interrupt.",
+      ),
+    );
+  }
 
   paneEl.replaceChildren(
     header,
     ...(banner ? [banner] : []),
     transcriptEl,
     thinkingStrip,
-    composer,
+    ...(composer ? [composer] : []),
   );
   followStream(true);
 }
@@ -445,6 +551,7 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
     if (!sameRef(selected, ref)) return;
     if (events.some((e) => e.seq === event.seq)) return;
     events.push(event);
+    if (isResearch(findMeta(ref).session) && isResearchPrompt(event)) return;
     if (!contentEl || !partialView) return;
     contentEl.querySelector(".tc-placeholder")?.remove();
     // A flushed message replaces its streamed partial; paragraphs that were
@@ -507,6 +614,7 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
   api.onActiveTurns((keys) => {
     activeTurnKeys = new Set(keys);
     renderTree();
+    syncComposerRipple();
   });
 
   api.onTreeChanged(async () => {

@@ -329,6 +329,18 @@ function createWindow(): void {
     win.webContents.on("did-finish-load", async () => {
       const delay = Number(process.env.THEOCODE_SCREENSHOT_DELAY_MS) || 1500;
       await new Promise((r) => setTimeout(r, delay));
+      if (process.env.THEOCODE_SCREENSHOT_THEME === "light") {
+        await win!.webContents.executeJavaScript(
+          `document.body.classList.add("light-theme");document.body.classList.remove("dark-theme");`,
+        );
+      }
+      const click = process.env.THEOCODE_SCREENSHOT_CLICK;
+      if (click) {
+        await win!.webContents.executeJavaScript(
+          `document.querySelector(${JSON.stringify(click)})?.click()`,
+        );
+        await new Promise((r) => setTimeout(r, 400));
+      }
       const image = await win!.webContents.capturePage();
       const { writeFileSync } = await import("node:fs");
       writeFileSync(shotPath, image.toPNG());
@@ -585,13 +597,13 @@ function handleResearchPoll(
 ipcMain.handle(
   "workspace:send",
   (_event, ref: SessionRef, text: string) => {
+    // Research subagents are agent-driven; the UI never prompts them.
+    if (readSession(ref)?.question) return readEvents(ref);
+
     const event = appendEvent(ref, { type: "user_message", text });
     win?.webContents.send("workspace:event", { ref, event });
-    // Sessions are titled by their latest prompt (grok never names them) —
-    // except research subagents, whose title stays their question.
-    if (!readSession(ref)?.question) {
-      updateSessionMeta(ref, { title: titleFromPrompt(text) });
-    }
+    // Sessions are titled by their latest prompt (grok never names them).
+    updateSessionMeta(ref, { title: titleFromPrompt(text) });
 
     // Subagent sessions are driven by theocode; only store there.
     if (!ref.subagentId && !startTurn(ref, text)) {
@@ -704,16 +716,45 @@ ipcMain.handle("workspace:setupSeen", (_event, projectId: string) => {
 function seedDemo(): void {
   if (getTree().projects.length > 0) return;
   const project = createProject(join(app.getPath("home"), "Coding", "xai_onsite"));
+  // Sorts after xai_onsite so the first paint still opens the seeded session.
+  createProject(join(app.getPath("home"), "Coding", "zeta-app"));
+  createSession(project.id, undefined, "Session storage design");
   const session = createSession(project.id, undefined, "Wire up the sidebar");
   const ref: SessionRef = { projectId: project.id, sessionId: session.id };
   appendEvent(ref, { type: "user_message", text: "Build the session sidebar." });
   appendEvent(ref, { type: "agent_message", text: "Scaffolding the tree now." });
-  const sub = createSession(project.id, session.id, "Explore renderer layout");
-  appendEvent(
-    { ...ref, subagentId: sub.id },
-    { type: "agent_message", text: "Reading src/renderer for conventions." },
-  );
-  createSession(project.id, undefined, "Session storage design");
+  const question = "What does the renderer own versus main?";
+  const sub = createSession(project.id, session.id, question);
+  const subRef: SessionRef = { ...ref, subagentId: sub.id };
+  updateSessionMeta(subRef, { question });
+  appendEvent(subRef, {
+    type: "user_message",
+    text: `Research question:\n\n${question}\n\nAnswer this question and nothing else.`,
+  });
+  appendEvent(subRef, {
+    type: "agent_message",
+    text: "Reading src/renderer for conventions.",
+  });
+}
+
+// Marks the research parent (and the researcher) as in-flight so screenshots
+// can capture both ripple colors without spending a real grok turn.
+function seedDemoActiveTurns(): void {
+  for (const node of getTree().projects) {
+    for (const sessionNode of node.sessions) {
+      const research = sessionNode.subagents.find((s) => s.question);
+      if (!research) continue;
+      const ref: SessionRef = {
+        projectId: node.project.id,
+        sessionId: sessionNode.session.id,
+      };
+      turnsInFlight.set(turnKey(ref), { interrupt() {} });
+      turnsInFlight.set(turnKey({ ...ref, subagentId: research.id }), {
+        interrupt() {},
+      });
+      return;
+    }
+  }
 }
 
 // THEOCODE_DEMO_TURN=1 runs one turn on the first session at startup — with
@@ -734,6 +775,7 @@ function runDemoTurn(): void {
 
 app.whenReady().then(async () => {
   if (process.env.THEOCODE_DEMO === "1") seedDemo();
+  if (process.env.THEOCODE_DEMO_ACTIVE === "1") seedDemoActiveTurns();
   installSetupSkill();
   createWindow();
   if (process.env.THEOCODE_DEMO_TURN === "1") {
