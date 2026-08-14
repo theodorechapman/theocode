@@ -1,1 +1,2 @@
-.claude/
+.claude/worktrees/
+.claude/settings.local.json
