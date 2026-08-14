@@ -35,12 +35,24 @@ body {
   border-bottom: 1px solid var(--vbg-border-subtle);
 }
 
-.tc-identity {
+.tc-brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--vbg-space-2);
   align-self: center;
+  padding-block: var(--vbg-space-3);
+}
+
+.tc-identity {
   font-size: var(--vbg-type-label);
   font-weight: var(--vbg-weight-semibold);
   color: var(--vbg-text-primary);
-  padding-block: var(--vbg-space-3);
+}
+
+.tc-model {
+  font-size: var(--vbg-type-metadata);
+  color: var(--vbg-text-secondary);
+  white-space: nowrap;
 }
 
 .tc-tabs {
@@ -52,6 +64,9 @@ body {
 
 .tc-tab {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--vbg-space-2);
   border: 0;
   background: none;
   font: inherit;
@@ -60,11 +75,25 @@ body {
   padding: var(--vbg-space-3) var(--vbg-space-3);
   margin-bottom: -1px; /* the active border sits on the bar's border */
   border-bottom: 2px solid transparent;
+  border-radius: var(--vbg-radius-small) var(--vbg-radius-small) 0 0;
   cursor: pointer;
   white-space: nowrap;
+  min-width: 0;
   max-width: 22ch;
+}
+
+.tc-tab-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.tc-tab-swatch {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tc-project);
 }
 
 .tc-tab:hover {
@@ -74,12 +103,51 @@ body {
 .tc-tab[aria-current="true"] {
   color: var(--vbg-text-primary);
   font-weight: var(--vbg-weight-medium);
-  border-bottom-color: var(--vbg-text-primary);
+  border-bottom-color: var(--tc-project, var(--vbg-text-primary));
+}
+
+/* Each project keeps a stable pastel so tabs stay distinguishable. */
+.tc-tab[data-tone] {
+  background: color-mix(in oklab, var(--tc-project) 28%, transparent);
+}
+
+.tc-tab[data-tone]:hover {
+  background: color-mix(in oklab, var(--tc-project) 40%, transparent);
+}
+
+.tc-tab[data-tone][aria-current="true"] {
+  background: color-mix(in oklab, var(--tc-project) 48%, transparent);
+}
+
+.tc-tab[data-tone="sky"] {
+  --tc-project: light-dark(oklch(78% 0.07 230), oklch(70% 0.08 230));
+}
+.tc-tab[data-tone="mint"] {
+  --tc-project: light-dark(oklch(80% 0.08 160), oklch(72% 0.09 160));
+}
+.tc-tab[data-tone="peach"] {
+  --tc-project: light-dark(oklch(82% 0.08 50), oklch(74% 0.08 50));
+}
+.tc-tab[data-tone="lilac"] {
+  --tc-project: light-dark(oklch(80% 0.07 300), oklch(72% 0.08 300));
+}
+.tc-tab[data-tone="butter"] {
+  --tc-project: light-dark(oklch(86% 0.08 95), oklch(76% 0.08 95));
+}
+.tc-tab[data-tone="rose"] {
+  --tc-project: light-dark(oklch(80% 0.08 12), oklch(72% 0.08 12));
+}
+.tc-tab[data-tone="aqua"] {
+  --tc-project: light-dark(oklch(80% 0.07 195), oklch(72% 0.08 195));
+}
+.tc-tab[data-tone="iris"] {
+  --tc-project: light-dark(oklch(78% 0.08 275), oklch(70% 0.09 275));
 }
 
 .tc-tab-add {
   font-weight: var(--vbg-weight-medium);
   padding-inline: var(--vbg-space-2);
+  background: none;
 }
 
 /* --- Sidebar ------------------------------------------------------------ */
@@ -187,6 +255,12 @@ body {
   white-space: nowrap;
   font-size: var(--vbg-type-metadata);
   color: var(--vbg-text-secondary);
+}
+
+.tc-tree-research-icon {
+  flex: none;
+  display: inline-flex;
+  color: light-dark(oklch(68% 0.13 148), oklch(76% 0.14 148));
 }
 
 .tc-tree-empty {
@@ -336,6 +410,18 @@ body {
   display: flex;
   align-items: flex-end;
   gap: var(--vbg-space-3);
+}
+
+.tc-composer-send {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--vbg-space-1);
+  flex: none;
+}
+
+.tc-composer-send .tc-ripple.is-idle {
+  visibility: hidden;
 }
 
 .tc-composer-input {
@@ -975,15 +1061,19 @@ pre.tc-md code {
   height: 100%;
   border-radius: 1px;
   background: currentColor;
-  animation: tc-ripple 1s ease-in-out infinite;
+  animation: tc-ripple 0.45s ease-in-out infinite;
 }
 
 .tc-ripple > span:nth-child(2) {
-  animation-delay: 0.15s;
+  animation-delay: 0.08s;
 }
 
 .tc-ripple > span:nth-child(3) {
-  animation-delay: 0.3s;
+  animation-delay: 0.16s;
+}
+
+.tc-ripple-research {
+  color: light-dark(oklch(68% 0.13 148), oklch(76% 0.14 148));
 }
 
 @keyframes tc-ripple {
