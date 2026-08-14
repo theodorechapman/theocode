@@ -24,6 +24,9 @@ const workspace: WorkspaceApi = {
   onEvent: (cb) => {
     ipcRenderer.on("workspace:event", (_event, update) => cb(update));
   },
+  onPartial: (cb) => {
+    ipcRenderer.on("workspace:partial", (_event, update) => cb(update));
+  },
   getSetupInfo: (projectId: string) =>
     ipcRenderer.invoke("workspace:setupInfo", projectId),
   runSetup: (projectId: string, answers: SetupAnswers) =>

@@ -96,6 +96,8 @@ export function removeGrokCliAuth(issuer: string, clientId: string): void {
 }
 
 export function grokBinary(): string {
+  // Dev/test override: point turns at a stub binary (e.g. an NDJSON replayer).
+  if (process.env.THEOCODE_GROK_BIN) return process.env.THEOCODE_GROK_BIN;
   const installed = join(GROK_DIR, "bin", "grok");
   return existsSync(installed) ? installed : "grok";
 }

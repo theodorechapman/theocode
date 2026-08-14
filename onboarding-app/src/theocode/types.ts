@@ -29,6 +29,20 @@ export interface SessionMeta {
   title: string;
   createdAt: string;
   updatedAt: string;
+  /** The grok CLI's session id, set after the first turn; later turns --resume it. */
+  grokSessionId?: string;
+}
+
+/** In-flight streaming state for the renderer, replaced by real events on flush. */
+export interface TurnPartial {
+  thought?: string;
+  text?: string;
+  tool?: {
+    toolName: string;
+    command?: string;
+    output?: string;
+    status?: string;
+  };
 }
 
 /**
@@ -73,6 +87,9 @@ export interface WorkspaceApi {
   /** Appends a user message record; the agent turn itself is not wired yet. */
   sendMessage(ref: SessionRef, text: string): Promise<SessionEvent[]>;
   onEvent(cb: (update: { ref: SessionRef; event: SessionEvent }) => void): void;
+  onPartial(
+    cb: (update: { ref: SessionRef; partial: TurnPartial | null }) => void,
+  ): void;
   /** Filesystem detection for the setup prompt. */
   getSetupInfo(projectId: string): Promise<SetupDetection>;
   /** Starts the setup agent run; resolves with the new session's ref. */

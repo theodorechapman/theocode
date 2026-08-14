@@ -25,9 +25,11 @@ import {
   createSession,
   getTree,
   readEvents,
+  readSession,
 } from "./theocode/sessions";
 import { getProject, updateProject } from "./theocode/sessions";
 import { detectStack, installSetupSkill, runProjectSetup } from "./theocode/setup";
+import { runAgentTurn, type TurnSinks } from "./theocode/turn";
 import { flushDb } from "./theocode/db";
 import type { SessionRef, SetupAnswers } from "./theocode/types";
 import type { ConnectionInfo, ConnectResult, ProviderId } from "./types";
@@ -138,7 +140,8 @@ function createWindow(): void {
   const shotPath = process.env.THEOCODE_SCREENSHOT;
   if (shotPath) {
     win.webContents.on("did-finish-load", async () => {
-      await new Promise((r) => setTimeout(r, 1500));
+      const delay = Number(process.env.THEOCODE_SCREENSHOT_DELAY_MS) || 1500;
+      await new Promise((r) => setTimeout(r, delay));
       const image = await win!.webContents.capturePage();
       const { writeFileSync } = await import("node:fs");
       writeFileSync(shotPath, image.toPNG());
@@ -237,14 +240,53 @@ ipcMain.handle("workspace:createSession", (_event, projectId: string) =>
 
 ipcMain.handle("workspace:events", (_event, ref: SessionRef) => readEvents(ref));
 
-// Records the user's message. Invoking the grok turn (src/theocode/agent.ts)
-// is intentionally not wired yet — the chat surface is a stub while rendering
-// decisions are made.
+// ---- Agent turns -----------------------------------------------------------
+
+const turnsInFlight = new Set<string>();
+
+function turnKey(ref: SessionRef): string {
+  return `${ref.projectId}/${ref.sessionId}/${ref.subagentId ?? ""}`;
+}
+
+function turnSinks(extra?: Partial<TurnSinks>): TurnSinks {
+  return {
+    onEvent: (ref, event) =>
+      win?.webContents.send("workspace:event", { ref, event }),
+    onPartial: (ref, partial) =>
+      win?.webContents.send("workspace:partial", { ref, partial }),
+    ...extra,
+  };
+}
+
 ipcMain.handle(
   "workspace:send",
   (_event, ref: SessionRef, text: string) => {
     const event = appendEvent(ref, { type: "user_message", text });
     win?.webContents.send("workspace:event", { ref, event });
+
+    const key = turnKey(ref);
+    const project = getProject(ref.projectId);
+    const session = readSession(ref);
+    if (ref.subagentId || !project || !session) {
+      // Subagent sessions are driven by their parent turn; only store here.
+      return readEvents(ref);
+    }
+    if (turnsInFlight.has(key)) {
+      const notice = appendEvent(ref, {
+        type: "notice",
+        text: "A turn is already running. The message was stored but not sent to the agent.",
+      });
+      win?.webContents.send("workspace:event", { ref, event: notice });
+      return readEvents(ref);
+    }
+    turnsInFlight.add(key);
+    runAgentTurn(
+      project,
+      session,
+      ref,
+      text,
+      turnSinks({ onDone: () => turnsInFlight.delete(key) }),
+    );
     return readEvents(ref);
   },
 );
@@ -264,9 +306,15 @@ ipcMain.handle(
   (_event, projectId: string, answers: SetupAnswers): SessionRef => {
     const project = requireProject(projectId);
     updateProject(projectId, { setupPromptedAt: new Date().toISOString() });
-    return runProjectSetup(project, answers, (ref, event) =>
-      win?.webContents.send("workspace:event", { ref, event }),
+    let key = "";
+    const ref = runProjectSetup(
+      project,
+      answers,
+      turnSinks({ onDone: () => turnsInFlight.delete(key) }),
     );
+    key = turnKey(ref);
+    turnsInFlight.add(key);
+    return ref;
   },
 );
 
@@ -291,10 +339,39 @@ function seedDemo(): void {
   createSession(project.id, undefined, "Session storage design");
 }
 
+// THEOCODE_DEMO_TURN=1 runs one turn on the first session at startup — with
+// THEOCODE_GROK_BIN pointed at an NDJSON replayer this exercises streaming
+// and rendering without spending a real agent turn.
+function runDemoTurn(): void {
+  const node = getTree().projects[0];
+  const sessionNode = node?.sessions[0];
+  if (!node || !sessionNode) return;
+  const ref: SessionRef = {
+    projectId: node.project.id,
+    sessionId: sessionNode.session.id,
+  };
+  const session = readSession(ref);
+  if (!session) return;
+  const key = turnKey(ref);
+  turnsInFlight.add(key);
+  const event = appendEvent(ref, { type: "user_message", text: "Demo turn." });
+  win?.webContents.send("workspace:event", { ref, event });
+  runAgentTurn(
+    node.project,
+    session,
+    ref,
+    "Demo turn.",
+    turnSinks({ onDone: () => turnsInFlight.delete(key) }),
+  );
+}
+
 app.whenReady().then(async () => {
   if (process.env.THEOCODE_DEMO === "1") seedDemo();
   installSetupSkill();
   createWindow();
+  if (process.env.THEOCODE_DEMO_TURN === "1") {
+    setTimeout(runDemoTurn, 1200);
+  }
   await startProxyAndSync();
 });
 app.on("activate", () => {

@@ -1,5 +1,6 @@
 import { button, h } from "./dom";
 import { showSetupDialog } from "./setup";
+import { eventBlock, PartialView } from "./transcript";
 import type {
   SessionEvent,
   SessionMeta,
@@ -23,6 +24,18 @@ const collapsedProjects = new Set<string>();
 
 let treeEl: HTMLElement;
 let paneEl: HTMLElement;
+let transcriptEl: HTMLElement | null = null;
+let partialView: PartialView | null = null;
+let partialHadText = false;
+
+// Event types whose arrival means the matching streamed partial just flushed.
+const FLUSH_TYPES = new Set([
+  "agent_message",
+  "thought",
+  "tool_call",
+  "turn_end",
+  "turn_error",
+]);
 
 function sameRef(a: SessionRef | null, b: SessionRef): boolean {
   return (
@@ -114,7 +127,7 @@ function renderTree(): void {
   );
 }
 
-// --- Main pane: stubbed chat ------------------------------------------------
+// --- Main pane: transcript --------------------------------------------------
 
 function findMeta(ref: SessionRef): { session?: SessionMeta; project?: string } {
   const projectNode = tree.projects.find((p) => p.project.id === ref.projectId);
@@ -127,20 +140,23 @@ function findMeta(ref: SessionRef): { session?: SessionMeta; project?: string } 
   return { session, project: projectNode?.project.name };
 }
 
-function eventBlock(event: SessionEvent): HTMLElement {
-  const { seq, at, type, ...rest } = event;
-  const time = at ? new Date(at).toLocaleTimeString() : "";
-  const body =
-    typeof rest.text === "string" ? rest.text : JSON.stringify(rest, null, 2);
-  return h(
-    "article",
-    "tc-event",
-    h("p", "tc-event-meta", `${seq} · ${type} · ${time}`),
-    h("pre", "tc-event-body", body),
+function nearBottom(): boolean {
+  if (!transcriptEl) return true;
+  return (
+    transcriptEl.scrollTop + transcriptEl.clientHeight >=
+    transcriptEl.scrollHeight - 60
   );
 }
 
+function scrollToBottom(): void {
+  if (transcriptEl) transcriptEl.scrollTop = transcriptEl.scrollHeight;
+}
+
 function renderPane(): void {
+  transcriptEl = null;
+  partialView = null;
+  partialHadText = false;
+
   if (!selected) {
     paneEl.replaceChildren(
       h(
@@ -175,12 +191,16 @@ function renderPane(): void {
     ),
   );
 
-  const transcript = h("div", "tc-transcript");
+  partialView = new PartialView();
+  transcriptEl = h("div", "tc-transcript");
   if (events.length === 0) {
-    transcript.append(h("p", "tc-tree-empty", "No records in this session yet."));
+    transcriptEl.append(
+      h("p", "tc-tree-empty tc-placeholder", "No records in this session yet."),
+    );
   } else {
-    transcript.append(...events.map(eventBlock));
+    transcriptEl.append(...events.map((e) => eventBlock(e, false)));
   }
+  transcriptEl.append(partialView.el);
 
   const input = h("textarea", "tc-composer-input") as HTMLTextAreaElement;
   input.rows = 2;
@@ -189,8 +209,7 @@ function renderPane(): void {
     const text = input.value.trim();
     if (!text || !selected) return;
     input.value = "";
-    events = await api.sendMessage(selected, text);
-    renderPane();
+    await api.sendMessage(selected, text);
   });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -202,15 +221,11 @@ function renderPane(): void {
     "footer",
     "tc-composer",
     h("div", "tc-composer-row", input, send),
-    h(
-      "p",
-      "vbg-caption",
-      "Chat rendering is stubbed: records above are the raw session log. Messages are stored; the agent turn is not wired yet.",
-    ),
+    h("p", "vbg-caption", "Enter to send. Shift+Enter for a new line."),
   );
 
-  paneEl.replaceChildren(header, transcript, composer);
-  transcript.scrollTop = transcript.scrollHeight;
+  paneEl.replaceChildren(header, transcriptEl, composer);
+  scrollToBottom();
 }
 
 export async function initWorkspace(container: HTMLElement): Promise<void> {
@@ -232,10 +247,29 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
   });
 
   api.onEvent(({ ref, event }) => {
-    if (sameRef(selected, ref)) {
-      if (!events.some((e) => e.seq === event.seq)) events.push(event);
-      renderPane();
+    if (!sameRef(selected, ref)) return;
+    if (events.some((e) => e.seq === event.seq)) return;
+    events.push(event);
+    if (!transcriptEl || !partialView) return;
+    transcriptEl.querySelector(".tc-placeholder")?.remove();
+    const pin = nearBottom();
+    // A flushed block replaces its streamed partial; skip the fade when the
+    // text was already on screen while streaming.
+    const animate = !(event.type === "agent_message" && partialHadText);
+    if (FLUSH_TYPES.has(event.type)) {
+      partialView.update(null);
+      partialHadText = false;
     }
+    transcriptEl.insertBefore(eventBlock(event, animate), partialView.el);
+    if (pin) scrollToBottom();
+  });
+
+  api.onPartial(({ ref, partial }) => {
+    if (!sameRef(selected, ref) || !partialView) return;
+    const pin = nearBottom();
+    partialHadText = Boolean(partial?.text);
+    partialView.update(partial);
+    if (pin) scrollToBottom();
   });
 
   tree = await api.getTree();

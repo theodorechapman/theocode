@@ -476,3 +476,161 @@ body {
   font-size: var(--vbg-type-compact);
   font-weight: var(--vbg-weight-medium);
 }
+
+/* --- Transcript vocabulary ----------------------------------------------- */
+
+.tc-msg > * {
+  margin: 0;
+}
+
+.tc-msg-label {
+  font-size: var(--vbg-type-metadata);
+  font-weight: var(--vbg-weight-medium);
+  color: var(--vbg-text-secondary);
+  margin-bottom: var(--vbg-space-1);
+}
+
+.tc-msg-user .tc-para {
+  color: var(--vbg-text-secondary);
+}
+
+.tc-para {
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+  max-width: 68ch;
+}
+
+.tc-para + .tc-para,
+.tc-para + .tc-code,
+.tc-code + .tc-para {
+  margin-top: var(--vbg-space-2);
+}
+
+.tc-code,
+.tc-tool-cmd,
+.tc-tool-out,
+.tc-thought-body {
+  font-family: var(--vbg-font-mono);
+  font-size: var(--vbg-type-metadata);
+  line-height: var(--vbg-leading-compact);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+
+.tc-inline-code {
+  font-family: var(--vbg-font-mono);
+  font-size: 0.9em;
+}
+
+/* Tool calls: the full command in mono, clipped to 5 lines. */
+.tc-tool > * {
+  margin: 0;
+}
+
+.tc-tool {
+  border-left: 2px solid var(--vbg-border-default);
+  padding-left: var(--vbg-space-3);
+}
+
+.tc-tool-head {
+  display: flex;
+  gap: var(--vbg-space-3);
+  align-items: baseline;
+  font-size: var(--vbg-type-metadata);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-tool-name {
+  font-weight: var(--vbg-weight-medium);
+}
+
+.tc-tool-bad {
+  color: var(--vbg-color-error);
+}
+
+.tc-tool-cmd {
+  margin-top: var(--vbg-space-1);
+}
+
+.tc-tool-out {
+  margin-top: var(--vbg-space-2);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.tc-clampable {
+  cursor: pointer;
+}
+
+/* Thinking: collapsed by default, quiet. */
+.tc-thought {
+  font-size: var(--vbg-type-metadata);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-thought-summary {
+  cursor: pointer;
+}
+
+.tc-thought-body {
+  margin-top: var(--vbg-space-1);
+  max-width: 68ch;
+}
+
+.tc-thought-live {
+  margin: 0;
+  font-size: var(--vbg-type-metadata);
+  color: var(--vbg-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tc-turn-meta {
+  margin: 0;
+  font-size: var(--vbg-type-metadata);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-msg-error .tc-para {
+  color: var(--vbg-color-error);
+}
+
+.tc-partial {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-4);
+}
+
+.tc-partial:empty {
+  display: none;
+}
+
+/* Paragraph-by-paragraph fade-in for newly arrived content. */
+.tc-fade {
+  animation: tc-fade-in 240ms ease-out both;
+}
+
+@keyframes tc-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-fade {
+    animation: none;
+  }
+}

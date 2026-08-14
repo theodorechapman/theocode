@@ -82,13 +82,16 @@ export function buildAgentInvocation(
     { mode: 0o600 },
   );
 
+  // First turn creates the grok session under our UUID; later turns resume it.
+  const sessionArgs = session.grokSessionId
+    ? ["--resume", session.grokSessionId]
+    : ["--session-id", session.id];
   const args = [
     "--output-format",
     "streaming-json",
     "--cwd",
     project.path,
-    "--session-id",
-    session.id,
+    ...sessionArgs,
     "-p",
     prompt,
   ];

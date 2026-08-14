@@ -102,6 +102,22 @@ function refDir(ref: SessionRef): string {
   return sessionDir(ref.projectId, ref.sessionId, ref.subagentId);
 }
 
+export function readSession(ref: SessionRef): SessionMeta | null {
+  return readJson<SessionMeta>(join(refDir(ref), "session.json"));
+}
+
+export function updateSessionMeta(
+  ref: SessionRef,
+  patch: Partial<SessionMeta>,
+): SessionMeta | null {
+  const meta = readSession(ref);
+  if (!meta) return null;
+  const updated = { ...meta, ...patch };
+  writeJson(join(refDir(ref), "session.json"), updated);
+  mirror.sessionSaved(updated);
+  return updated;
+}
+
 export function readEvents(ref: SessionRef): SessionEvent[] {
   const path = join(refDir(ref), "events.jsonl");
   if (!existsSync(path)) return [];
