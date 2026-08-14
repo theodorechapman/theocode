@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
-# theocode worktrees — canonical implementation, installed by theocode as
+# theocode-managed: replace-on-update
+#
+# theocode worktrees — STARTER implementation, installed by theocode as
 # scripts/worktree.sh in every project. The theocode-wt tool executes THIS
 # script, so terminal use and in-app use can never drift.
+#
+# The setup agent may tailor this script to how the project is actually
+# deployed locally (extra services, config patching). When tailoring: change
+# the marker line above to "# theocode-managed: project-tailored" (or theocode
+# will overwrite your version on update) and KEEP the CLI + WT_* output
+# contract documented below — the theocode-wt tool parses it.
 #
 #   scripts/worktree.sh new [--parent wt-N[.M]] [--base <branch>] [--branch <name>]
 #   scripts/worktree.sh remove <wt-N[.M]> [--cascade]

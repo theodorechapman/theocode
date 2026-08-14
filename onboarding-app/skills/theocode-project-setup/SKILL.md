@@ -26,9 +26,17 @@ You are setting up infrastructure for the project in the current working directo
 Do these even when neither Vercel nor Supabase was selected:
 
 1. **Git**: if the directory is not a git repository, run `git init` and make an initial commit.
-2. **Worktree script**: theocode installs the canonical worktree script at `scripts/worktree.sh` (the theocode-wt tool executes this exact script, so terminal use and in-app use never drift). Verify it exists and is executable; if it is somehow missing, report that in "Needs you" — do NOT write your own version. Commit it so the team shares it. Usage, for reference:
-   - `scripts/worktree.sh new [--parent wt-N] [--base <branch>] [--branch <name>]` — next free wt-N (or child wt-N.M branched from wt-N), claims a port block (app 3100+100b, supabase 54321+100b, recorded in the worktree's `.env.ports`), patches the worktree's supabase ports.
-   - `scripts/worktree.sh remove wt-N [--cascade]` — refuses while children exist unless cascaded; releases port blocks; keeps branches.
+2. **Worktree script**: theocode installs a STARTER at `scripts/worktree.sh`. The theocode-wt tool executes this exact script every time a session moves to a worktree, so it must fit this project. Explore and make sure you understand all of the ways that this project is locally deployed BEFORE you touch the worktree script: dev servers and their ports (package.json scripts, vite/next/webpack config, Procfile, Makefile), docker-compose services and their published ports, supabase/config.toml, .env files the app reads, anything else that binds a port or writes shared local state. Then either keep the starter as-is (it already covers a plain app + supabase) or tailor it so each worktree gets a fully isolated copy of THIS project's local deployment (its services' ports remapped into the worktree's block, its config files patched inside the worktree).
+
+   Rules the script MUST keep — the theocode-wt tool depends on them:
+   - CLI: `new [--parent wt-N] [--base <branch>] [--branch <name>]` and `remove <wt-N[.M]> [--cascade]`.
+   - stdout stays machine-readable: `new` prints `WT_LABEL=`, `WT_BRANCH=`, `WT_PATH=`, `WT_APP_PORT=`, `WT_SB_PORT=`; `remove` prints `WT_REMOVED=<comma-list>`. Extra `WT_*` keys are fine; prose goes to stderr.
+   - Naming: labels are wt-N / wt-N.M, two levels max; a caller in a child gets a sibling. Never reuse a label whose branch still exists.
+   - Ports: claim a block via atomic `mkdir ~/.theocode/port-locks/<repo>-block-<n>` (claim file = worktree path); app ports from 3100+100b, supabase from 54321+100b; every project service's per-worktree port lives inside the block and is written to the worktree's `.env.ports`.
+   - Remove refuses while children exist unless `--cascade`; releases the port blocks by claim scan; keeps branches.
+   - If you tailor it: change the marker line to `# theocode-managed: project-tailored` (otherwise theocode overwrites your version on update), then verify with a smoke test — `scripts/worktree.sh new`, check the `WT_*` output and that the project actually runs in the worktree on its remapped ports, then `scripts/worktree.sh remove` it.
+
+   Commit the script either way so the team shares it.
 3. **Gitignore**: ensure `.gitignore` covers `.worktrees/`, `.grok/`, `.theocode/`, `.env*`, and `!.env.example`.
 
 ## Vercel (when selected or detected)
@@ -58,7 +66,7 @@ End with exactly this summary structure:
 - Vercel: <done / skipped / partial — one line of what happened>
 - Supabase: <done / skipped / partial — one line>
 - Ports: <blocks claimed, or none>
-- Scripts: <scripts/worktree.sh verified and committed / missing (reported)>
+- Scripts: <scripts/worktree.sh kept as starter / tailored (what changed) — committed>
 
 ## Needs you
 - <only items a human must do, with the exact command; omit section if empty>

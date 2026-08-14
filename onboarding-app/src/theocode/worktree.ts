@@ -30,6 +30,8 @@ export interface WorktreeInfo {
   };
 }
 
+const MANAGED_MARKER = "# theocode-managed: replace-on-update";
+
 let scriptSource: string | null = null;
 
 /** Where the canonical script ships from (set at app startup; tests point it
@@ -39,18 +41,21 @@ export function setWorktreeScriptSource(path: string): void {
 }
 
 /** Installs or refreshes the project's scripts/worktree.sh from the shipped
- *  canonical copy. Returns the script path. */
+ *  starter. A project-tailored script (managed marker removed by the setup
+ *  agent) is NEVER overwritten — only its CLI/output contract is relied on.
+ *  Returns the script path. */
 export function ensureWorktreeScript(projectPath: string): string {
   const target = join(projectPath, "scripts", "worktree.sh");
   if (scriptSource && existsSync(scriptSource)) {
     const wanted = readFileSync(scriptSource, "utf8");
-    let current = "";
+    let current: string | null = null;
     try {
       current = readFileSync(target, "utf8");
     } catch {
       // Not installed yet.
     }
-    if (current !== wanted) {
+    const managed = current === null || current.includes(MANAGED_MARKER);
+    if (managed && current !== wanted) {
       mkdirSync(join(projectPath, "scripts"), { recursive: true });
       writeFileSync(target, wanted);
     }

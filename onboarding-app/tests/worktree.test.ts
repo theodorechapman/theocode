@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -92,4 +92,29 @@ test("cascade removes the family, releases port blocks, keeps branches", () => {
 test("removal rejects labels that are not wt-N or wt-N.M", () => {
   expect(() => removeWorktree(repo, "..", false)).toThrow(/Invalid worktree name/);
   expect(() => removeWorktree(repo, "wt-1/../..", true)).toThrow(/Invalid worktree name/);
+});
+
+test("a project-tailored script survives; a managed one refreshes", () => {
+  const script = join(repo, "scripts", "worktree.sh");
+  // Managed copy: drift gets refreshed back to the shipped starter.
+  writeFileSync(script, "# theocode-managed: replace-on-update\n# drifted\n");
+  createWorktree(repo); // ensure runs as part of any call
+  expect(readFileSync(script, "utf8")).toContain("cmd_new");
+  // Tailored copy (marker changed): never overwritten — but it must keep the
+  // output contract, which this stub does.
+  const tailored = [
+    "#!/usr/bin/env bash",
+    "# theocode-managed: project-tailored",
+    'if [ "$1" = new ]; then',
+    '  echo "WT_LABEL=wt-9"; echo "WT_BRANCH=wt-9"; echo "WT_PATH=$PWD/.worktrees/wt-9";',
+    '  echo "WT_APP_PORT=3900"; echo "WT_SB_PORT=55221";',
+    "else",
+    '  echo "WT_REMOVED=wt-9"',
+    "fi",
+  ].join("\n");
+  writeFileSync(script, tailored);
+  const info = createWorktree(repo);
+  expect(info.label).toBe("wt-9");
+  expect(info.ports.app).toBe(3900);
+  expect(readFileSync(script, "utf8")).toBe(tailored);
 });
