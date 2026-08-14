@@ -95,11 +95,16 @@ export function removeGrokCliAuth(issuer: string, clientId: string): void {
   writeAuthFile(data);
 }
 
+/** The real grok CLI — used for management commands (`grok mcp add` etc.). */
 export function grokBinary(): string {
-  // Dev/test override: point turns at a stub binary (e.g. an NDJSON replayer).
-  if (process.env.THEOCODE_GROK_BIN) return process.env.THEOCODE_GROK_BIN;
   const installed = join(GROK_DIR, "bin", "grok");
   return existsSync(installed) ? installed : "grok";
+}
+
+/** The binary agent TURNS spawn. THEOCODE_GROK_BIN overrides it (e.g. an
+ *  NDJSON replayer) without hijacking the management commands above. */
+export function grokTurnBinary(): string {
+  return process.env.THEOCODE_GROK_BIN ?? grokBinary();
 }
 
 /**

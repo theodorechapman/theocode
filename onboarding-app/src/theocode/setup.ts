@@ -3,7 +3,7 @@ import { cpSync, existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { appendEvent, createSession } from "./sessions";
-import { runAgentTurn, type TurnSinks } from "./turn";
+import { runAgentTurn, type TurnHandle, type TurnSinks } from "./turn";
 import type {
   ProjectInfo,
   SessionRef,
@@ -71,14 +71,12 @@ export function runProjectSetup(
   project: ProjectInfo,
   answers: SetupAnswers,
   sinks: TurnSinks,
-): SessionRef {
+): { ref: SessionRef; handle: TurnHandle } {
   const detection = detectStack(project.path);
   const session = createSession(project.id, undefined, "Project setup");
   const ref: SessionRef = { projectId: project.id, sessionId: session.id };
   const prompt = setupPrompt(answers, detection);
   sinks.onEvent(ref, appendEvent(ref, { type: "user_message", text: prompt }));
-  void runAgentTurn(project, session, ref, prompt, sinks).catch((err) =>
-    console.error("setup turn failed:", err),
-  );
-  return ref;
+  const handle = runAgentTurn(project, session, ref, prompt, sinks);
+  return { ref, handle };
 }

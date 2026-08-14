@@ -1,7 +1,7 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { runOAuthFlow } from "./oauth";
 import { getProvider, GROK_CLIENT_ID, GROK_ISSUER } from "./providers";
 import {
@@ -25,6 +25,7 @@ import {
   getTree,
   readEvents,
   readSession,
+  titleFromPrompt,
   updateSessionMeta,
 } from "./theocode/sessions";
 import { createWorktree, removeWorktree } from "./theocode/worktree";
@@ -39,7 +40,7 @@ import {
 } from "./theocode/research";
 import { getProject, updateProject } from "./theocode/sessions";
 import { detectStack, installSetupSkill, runProjectSetup } from "./theocode/setup";
-import { runAgentTurn, type TurnSinks } from "./theocode/turn";
+import { runAgentTurn, type TurnHandle, type TurnSinks } from "./theocode/turn";
 import { flushDb } from "./theocode/db";
 import type { SessionRef, SetupAnswers } from "./theocode/types";
 import type { ConnectionInfo, ConnectResult, ProviderId } from "./types";
@@ -81,7 +82,7 @@ function loadProxySecret(): string {
 
 /** The agent session currently running a turn for this project, if any. */
 function activeTurnRef(projectId: string): SessionRef | null {
-  for (const key of turnsInFlight) {
+  for (const key of turnsInFlight.keys()) {
     const [p, s, sub] = key.split("/");
     if (p === projectId && !sub) return { projectId: p, sessionId: s };
   }
@@ -397,7 +398,7 @@ ipcMain.handle("workspace:events", (_event, ref: SessionRef) => readEvents(ref))
 
 // ---- Agent turns -----------------------------------------------------------
 
-const turnsInFlight = new Set<string>();
+const turnsInFlight = new Map<string, TurnHandle>();
 
 function turnKey(ref: SessionRef): string {
   return `${ref.projectId}/${ref.sessionId}/${ref.subagentId ?? ""}`;
@@ -427,8 +428,7 @@ function startTurn(
   const project = getProject(ref.projectId);
   const session = readSession(ref);
   if (!project || !session) return false;
-  turnsInFlight.add(key);
-  void runAgentTurn(
+  const handle = runAgentTurn(
     project,
     session,
     ref,
@@ -440,10 +440,8 @@ function startTurn(
       },
     }),
     { research: opts?.research },
-  ).catch((err) => {
-    console.error("turn failed:", err);
-    turnsInFlight.delete(key);
-  });
+  );
+  turnsInFlight.set(key, handle);
   return true;
 }
 
@@ -546,6 +544,11 @@ ipcMain.handle(
   (_event, ref: SessionRef, text: string) => {
     const event = appendEvent(ref, { type: "user_message", text });
     win?.webContents.send("workspace:event", { ref, event });
+    // Sessions are titled by their latest prompt (grok never names them) —
+    // except research subagents, whose title stays their question.
+    if (!readSession(ref)?.question) {
+      updateSessionMeta(ref, { title: titleFromPrompt(text) });
+    }
 
     // Subagent sessions are driven by theocode; only store there.
     if (!ref.subagentId && !startTurn(ref, text)) {
@@ -560,6 +563,60 @@ ipcMain.handle(
     return readEvents(ref);
   },
 );
+
+ipcMain.handle("workspace:interrupt", (_event, ref: SessionRef) => {
+  turnsInFlight.get(turnKey(ref))?.interrupt();
+});
+
+// Native (macOS) context menu for a project tab. Resolves true if the
+// project was closed; closing archives it (closedAt) — data stays on disk.
+ipcMain.handle(
+  "workspace:projectMenu",
+  (_event, projectId: string): Promise<boolean> => {
+    const project = getProject(projectId);
+    if (!project) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      let closed = false;
+      const menu = Menu.buildFromTemplate([
+        {
+          label: `Close “${project.name}”`,
+          click: () => {
+            updateProject(projectId, { closedAt: new Date().toISOString() });
+            closed = true;
+          },
+        },
+        { type: "separator" },
+        {
+          label: "Reveal in Finder",
+          click: () => void shell.openPath(project.path),
+        },
+      ]);
+      menu.popup({
+        window: win ?? undefined,
+        // Item click handlers can fire after the close callback; defer so
+        // `closed` is settled before we resolve.
+        callback: () => setImmediate(() => resolve(closed)),
+      });
+    });
+  },
+);
+
+// Fallback for List blocks whose tool result carried no listing text.
+ipcMain.handle("workspace:listDir", (_event, path: string): string[] => {
+  try {
+    return readdirSync(path, { withFileTypes: true })
+      .filter((entry) => !entry.name.startsWith("."))
+      .sort(
+        (a, b) =>
+          Number(b.isDirectory()) - Number(a.isDirectory()) ||
+          a.name.localeCompare(b.name),
+      )
+      .slice(0, 50)
+      .map((entry) => (entry.isDirectory() ? `${entry.name}/` : entry.name));
+  } catch {
+    return [];
+  }
+});
 
 function requireProject(projectId: string) {
   const project = getProject(projectId);
@@ -577,7 +634,7 @@ ipcMain.handle(
     const project = requireProject(projectId);
     updateProject(projectId, { setupPromptedAt: new Date().toISOString() });
     let key = "";
-    const ref = runProjectSetup(
+    const { ref, handle } = runProjectSetup(
       project,
       answers,
       turnSinks({
@@ -588,7 +645,7 @@ ipcMain.handle(
       }),
     );
     key = turnKey(ref);
-    turnsInFlight.add(key);
+    turnsInFlight.set(key, handle);
     return ref;
   },
 );

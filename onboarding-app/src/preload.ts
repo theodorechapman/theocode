@@ -21,6 +21,12 @@ const workspace: WorkspaceApi = {
   getEvents: (ref: SessionRef) => ipcRenderer.invoke("workspace:events", ref),
   sendMessage: (ref: SessionRef, text: string) =>
     ipcRenderer.invoke("workspace:send", ref, text),
+  interruptTurn: (ref: SessionRef) =>
+    ipcRenderer.invoke("workspace:interrupt", ref),
+  listDirectory: (path: string) =>
+    ipcRenderer.invoke("workspace:listDir", path),
+  projectMenu: (projectId: string) =>
+    ipcRenderer.invoke("workspace:projectMenu", projectId),
   onEvent: (cb) => {
     ipcRenderer.on("workspace:event", (_event, update) => cb(update));
   },

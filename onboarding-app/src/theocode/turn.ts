@@ -1,9 +1,9 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import {
   ensureFolderTrusted,
-  grokBinary,
+  grokTurnBinary,
   registerProxyInProject,
   unregisterProxyFromProject,
 } from "../grok";
@@ -33,6 +33,11 @@ export interface TurnSinks {
   onEvent(ref: SessionRef, event: SessionEvent): void;
   onPartial(ref: SessionRef, partial: TurnPartial | null): void;
   onDone?(exitCode: number | null): void;
+}
+
+export interface TurnHandle {
+  /** Kills the grok process; the transcript gets a notice, not an error. */
+  interrupt(): void;
 }
 
 interface ToolState {
@@ -158,21 +163,34 @@ async function syncProjectMcp(
   }
 }
 
-export async function runAgentTurn(
+export function runAgentTurn(
   project: ProjectInfo,
   session: SessionMeta,
   ref: SessionRef,
   prompt: string,
   sinks: TurnSinks,
   opts?: { research?: boolean },
-): Promise<void> {
+): TurnHandle {
+  // The handle exists before the process does: MCP registration has to land
+  // in the project config before grok reads it, so the spawn is deferred
+  // behind that async sync. Interrupting pre-spawn just cancels the start.
+  let child: ChildProcess | null = null;
+  let interrupted = false;
+
+  const start = async () => {
   await syncProjectMcp(project, session.worktree?.path ?? project.path);
+  if (interrupted) {
+    sinks.onPartial(ref, null);
+    sinks.onDone?.(null);
+    return;
+  }
   const invocation = buildAgentInvocation(project, session, prompt, opts);
-  const child = spawn(grokBinary(), invocation.args, {
+  const proc = spawn(grokTurnBinary(), invocation.args, {
     cwd: invocation.cwd,
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  child = proc;
 
   let cur: { kind: "thought" | "text" | null; buf: string } = {
     kind: null,
@@ -271,16 +289,40 @@ export async function runAgentTurn(
         const tool = tools.get(String(record.toolCallId ?? ""));
         if (!tool) break;
         const content = record.content as
-          | Array<{ content?: { text?: unknown } }>
+          | Array<Record<string, unknown>>
           | undefined;
-        const text = content?.[0]?.content?.text;
-        if (typeof text === "string" && text) tool.output = text;
+        if (Array.isArray(content)) {
+          const texts = content
+            .map((item) => {
+              const inner = item.content as
+                | Record<string, unknown>
+                | undefined;
+              const text = inner?.text ?? item.text;
+              return typeof text === "string" ? text : "";
+            })
+            .filter(Boolean);
+          if (texts.length > 0) tool.output = texts.join("\n");
+        }
         if (typeof record.status === "string" && record.status) {
           tool.status = record.status;
         }
-        const rawOutput = record.rawOutput as { exit_code?: unknown } | null;
+        const rawOutput = record.rawOutput as
+          | Record<string, unknown>
+          | null
+          | undefined;
         if (typeof rawOutput?.exit_code === "number") {
           tool.exitCode = rawOutput.exit_code;
+        }
+        // Some tools (list_dir among them) put their result only in
+        // rawOutput; fall back to any string field that looks like output.
+        if (!tool.output && rawOutput) {
+          for (const key of ["output", "stdout", "content", "result", "text"]) {
+            const value = rawOutput[key];
+            if (typeof value === "string" && value.trim()) {
+              tool.output = value;
+              break;
+            }
+          }
         }
         if (tool.status === "completed" || tool.status === "failed") {
           flushTool(tool);
@@ -315,7 +357,7 @@ export async function runAgentTurn(
   }
 
   let stdoutBuf = "";
-  child.stdout.on("data", (chunk: Buffer) => {
+  proc.stdout.on("data", (chunk: Buffer) => {
     stdoutBuf += chunk.toString();
     let newline: number;
     while ((newline = stdoutBuf.indexOf("\n")) >= 0) {
@@ -331,20 +373,22 @@ export async function runAgentTurn(
   });
 
   let stderrTail = "";
-  child.stderr.on("data", (chunk: Buffer) => {
+  proc.stderr.on("data", (chunk: Buffer) => {
     stderrTail = (stderrTail + chunk.toString()).slice(-4000);
   });
 
-  child.on("error", (err) => {
+  proc.on("error", (err) => {
     emit({ type: "turn_error", text: `Failed to launch grok: ${err.message}` });
     sinks.onPartial(ref, null);
     sinks.onDone?.(null);
   });
-  child.on("close", (code) => {
+  proc.on("close", (code) => {
     if (partialTimer) clearTimeout(partialTimer);
     flushCur();
     for (const tool of [...tools.values()]) flushTool(tool);
-    if (code !== 0) {
+    if (interrupted) {
+      emit({ type: "notice", text: "Interrupted." });
+    } else if (code !== 0) {
       emit({
         type: "turn_error",
         text: `grok exited with code ${code}`,
@@ -354,4 +398,25 @@ export async function runAgentTurn(
     sinks.onPartial(ref, null);
     sinks.onDone?.(code);
   });
+  };
+
+  void start().catch((err) => {
+    sinks.onEvent(
+      ref,
+      appendEvent(ref, {
+        type: "turn_error",
+        text: `Turn failed to start: ${err instanceof Error ? err.message : err}`,
+      }),
+    );
+    sinks.onPartial(ref, null);
+    sinks.onDone?.(null);
+  });
+
+  return {
+    interrupt() {
+      if (interrupted) return;
+      interrupted = true;
+      child?.kill("SIGTERM");
+    },
+  };
 }

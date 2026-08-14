@@ -13,6 +13,73 @@ body {
   height: 100vh;
   display: grid;
   grid-template-columns: 264px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+/* --- Top bar: identity + project tabs + "+" ------------------------------ */
+
+/* Chrome is not copy — no text selection on the top bar or sidebar. */
+.tc-topbar,
+.tc-sidebar {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.tc-topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: stretch;
+  gap: var(--vbg-space-4);
+  padding: 0 var(--vbg-space-4);
+  background: var(--vbg-background-200);
+  border-bottom: 1px solid var(--vbg-border-subtle);
+}
+
+.tc-identity {
+  align-self: center;
+  font-size: var(--vbg-type-label);
+  font-weight: var(--vbg-weight-semibold);
+  color: var(--vbg-text-primary);
+  padding-block: var(--vbg-space-3);
+}
+
+.tc-tabs {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+.tc-tab {
+  appearance: none;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: var(--vbg-type-compact);
+  color: var(--vbg-text-secondary);
+  padding: var(--vbg-space-3) var(--vbg-space-3);
+  margin-bottom: -1px; /* the active border sits on the bar's border */
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tc-tab:hover {
+  color: var(--vbg-text-primary);
+}
+
+.tc-tab[aria-current="true"] {
+  color: var(--vbg-text-primary);
+  font-weight: var(--vbg-weight-medium);
+  border-bottom-color: var(--vbg-text-primary);
+}
+
+.tc-tab-add {
+  font-weight: var(--vbg-weight-medium);
+  padding-inline: var(--vbg-space-2);
 }
 
 /* --- Sidebar ------------------------------------------------------------ */
@@ -25,24 +92,14 @@ body {
   border-right: 1px solid var(--vbg-border-subtle);
 }
 
-.tc-sidebar-head {
-  padding: var(--vbg-space-4) var(--vbg-space-4) var(--vbg-space-3);
-}
-
-.tc-identity {
-  font-size: var(--vbg-type-label);
-  font-weight: var(--vbg-weight-semibold);
-  color: var(--vbg-text-primary);
-}
-
 .tc-tree {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 0 var(--vbg-space-2) var(--vbg-space-4);
+  padding: var(--vbg-space-3) var(--vbg-space-2) var(--vbg-space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--vbg-space-4);
+  gap: var(--vbg-space-1);
 }
 
 .tc-tree-project-head {
@@ -206,9 +263,14 @@ body {
 }
 
 .tc-transcript {
+  position: relative; /* offsetTop of blocks is measured against this */
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+/* Lenis wraps .tc-transcript (wrapper) around this content element. */
+.tc-transcript-inner {
   padding-block: var(--vbg-space-4);
   display: flex;
   flex-direction: column;
@@ -490,20 +552,133 @@ body {
   margin-bottom: var(--vbg-space-1);
 }
 
-.tc-msg-user .tc-para {
+.tc-msg-user .tc-md {
   color: var(--vbg-text-secondary);
 }
 
 .tc-para {
   font-size: var(--vbg-type-compact);
   line-height: var(--vbg-leading-compact);
-  max-width: 68ch;
 }
 
-.tc-para + .tc-para,
-.tc-para + .tc-code,
-.tc-code + .tc-para {
+/* --- Markdown blocks ------------------------------------------------------ */
+
+.tc-md {
+  margin: 0;
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+}
+
+.tc-md + .tc-md {
   margin-top: var(--vbg-space-2);
+}
+
+h1.tc-md,
+h2.tc-md,
+h3.tc-md,
+h4.tc-md,
+h5.tc-md,
+h6.tc-md {
+  font-weight: var(--vbg-weight-heading);
+  line-height: var(--vbg-leading-compact);
+}
+
+h1.tc-md,
+h2.tc-md {
+  font-size: var(--vbg-type-subsection);
+}
+
+h3.tc-md,
+h4.tc-md,
+h5.tc-md,
+h6.tc-md {
+  font-size: var(--vbg-type-compact);
+}
+
+.tc-md + h1.tc-md,
+.tc-md + h2.tc-md,
+.tc-md + h3.tc-md,
+.tc-md + h4.tc-md {
+  margin-top: var(--vbg-space-4);
+}
+
+ul.tc-md,
+ol.tc-md {
+  padding-left: var(--vbg-space-6);
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-1);
+}
+
+.tc-md li > ul,
+.tc-md li > ol {
+  margin: var(--vbg-space-1) 0 0;
+  padding-left: var(--vbg-space-5);
+}
+
+.tc-md li > p {
+  margin: 0;
+}
+
+blockquote.tc-md {
+  border-left: 2px solid var(--vbg-border-default);
+  padding-left: var(--vbg-space-3);
+  color: var(--vbg-text-secondary);
+}
+
+blockquote.tc-md > p {
+  margin: 0;
+}
+
+hr.tc-md {
+  border: 0;
+  border-top: 1px solid var(--vbg-border-subtle);
+  width: 100%;
+}
+
+table.tc-md {
+  border-collapse: collapse;
+}
+
+table.tc-md th,
+table.tc-md td {
+  border: 1px solid var(--vbg-border-subtle);
+  padding: var(--vbg-space-1) var(--vbg-space-3);
+  text-align: left;
+}
+
+table.tc-md th {
+  font-weight: var(--vbg-weight-medium);
+}
+
+.tc-md code {
+  font-family: var(--vbg-font-mono);
+  font-size: 0.9em;
+}
+
+pre.tc-md {
+  font-family: var(--vbg-font-mono);
+  font-size: var(--vbg-type-metadata);
+  line-height: var(--vbg-leading-compact);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--vbg-background-200);
+  border: 1px solid var(--vbg-border-subtle);
+  border-radius: var(--vbg-radius-small);
+  padding: var(--vbg-space-2) var(--vbg-space-3);
+}
+
+pre.tc-md code {
+  font-size: inherit;
+}
+
+.tc-md a {
+  color: var(--vbg-color-info);
+  text-decoration: none;
+}
+
+.tc-md a:hover {
+  text-decoration: underline;
 }
 
 .tc-code,
@@ -523,7 +698,8 @@ body {
   font-size: 0.9em;
 }
 
-/* Tool calls: the full command in mono, clipped to 5 lines. */
+/* Tool calls: the full command in mono, clipped to 5 lines. Tool boxes are
+   width-clamped (prose is not — the inverse would be backwards). */
 .tc-tool > * {
   margin: 0;
 }
@@ -531,6 +707,7 @@ body {
 .tc-tool {
   border-left: 2px solid var(--vbg-border-default);
   padding-left: var(--vbg-space-3);
+  max-width: 72ch;
 }
 
 .tc-tool-head {
@@ -569,6 +746,79 @@ body {
   cursor: pointer;
 }
 
+/* Read/List collapse their subject to one path in the head line. */
+.tc-tool-path {
+  font-family: var(--vbg-font-mono);
+  color: var(--vbg-text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* --- Directory tree (list_directory) -------------------------------------- */
+
+.tc-tree-box {
+  margin-top: var(--vbg-space-1);
+  font-family: var(--vbg-font-mono);
+  font-size: var(--vbg-type-metadata);
+  line-height: var(--vbg-leading-compact);
+}
+
+.tc-tree-line {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tc-tree-cnx {
+  color: var(--vbg-text-secondary);
+}
+
+.tc-dir {
+  color: var(--vbg-blue-900);
+  font-weight: var(--vbg-weight-medium);
+}
+
+.tc-file {
+  color: var(--vbg-text-primary);
+}
+
+.tc-tree-ellipsis {
+  color: var(--vbg-text-secondary);
+  user-select: none;
+}
+
+/* --- Bash syntax colors --------------------------------------------------- */
+
+.tc-sh-cmd {
+  color: var(--vbg-blue-900);
+  font-weight: var(--vbg-weight-medium);
+}
+
+.tc-sh-str {
+  color: var(--vbg-green-900);
+}
+
+.tc-sh-flag {
+  color: var(--vbg-amber-900);
+}
+
+.tc-sh-var {
+  color: var(--vbg-red-900);
+}
+
+.tc-sh-kw {
+  color: var(--vbg-red-900);
+  font-weight: var(--vbg-weight-medium);
+}
+
+.tc-sh-op {
+  color: var(--vbg-text-secondary);
+}
+
+.tc-sh-comment {
+  color: var(--vbg-text-secondary);
+  font-style: italic;
+}
+
 /* Thinking: collapsed by default, quiet. */
 .tc-thought {
   font-size: var(--vbg-type-metadata);
@@ -581,7 +831,6 @@ body {
 
 .tc-thought-body {
   margin-top: var(--vbg-space-1);
-  max-width: 68ch;
 }
 
 .tc-thought-live {
@@ -591,6 +840,49 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Live thinking pinned above the composer, outside the transcript scroll. */
+.tc-thinking-strip {
+  padding-top: var(--vbg-space-2);
+}
+
+.tc-thinking-strip:empty {
+  display: none;
+  padding: 0;
+}
+
+/* Fast-cycling shimmer on the word "Thinking" while thoughts stream. */
+.tc-thinking-word {
+  font-weight: var(--vbg-weight-medium);
+  background: linear-gradient(
+    90deg,
+    var(--vbg-text-secondary) 0%,
+    var(--vbg-text-primary) 40%,
+    var(--vbg-text-secondary) 80%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: tc-thinking-cycle 0.8s linear infinite;
+}
+
+@keyframes tc-thinking-cycle {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: 0% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tc-thinking-word {
+    animation: none;
+    background: none;
+    color: var(--vbg-text-secondary);
+  }
 }
 
 .tc-turn-meta {
