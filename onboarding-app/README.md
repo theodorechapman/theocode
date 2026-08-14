@@ -9,9 +9,9 @@ loopback redirect, RFC 8252).
 - **Sidebar** — threads organized project → agent session → subagent sessions.
   Projects group their sessions; subagent sessions nest under the agent
   session that spawned them.
-- **Session pane** — stubbed chat: it shows the raw session records and stores
-  sent messages, but message rendering and the agent loop are deliberately
-  unwired until rendering decisions are made.
+- **Session pane** — live chat: turns stream in coalesced (thinking,
+  full bash commands clipped to 5 lines, paragraph-by-paragraph fade-in),
+  with quiet turn footers and a raw fallback for unknown record types.
 - **Connections** — the OAuth onboarding surface (Grok Build CLI, Supabase
   MCP, Vercel MCP), reachable from the sidebar footer. Grok credentials are
   written to the CLI's own store (`~/.grok/auth.json`); MCP tokens are
@@ -22,7 +22,7 @@ loopback redirect, RFC 8252).
 theocode runs a local proxy (port 8917, falling back to an ephemeral port) that exposes the connected MCP servers to the grok CLI without ever handing it the upstream tokens:
 
 - Routes: `http://127.0.0.1:8917/supabase` and `http://127.0.0.1:8917/vercel`, guarded by a per-install local secret (`userData/proxy-secret`, sent as a bearer header from the grok config).
-- On connect/disconnect (and at every startup), theocode runs `grok mcp add`/`remove` to keep `theocode-supabase` / `theocode-vercel` registered in `~/.grok/config.toml` with the current port and secret.
+- Registration is per project, not global: before each turn theocode syncs `<workdir>/.grok/config.toml` (main checkout or the session's worktree) so `theocode-supabase` / `theocode-vercel` / `theocode-wt` / `theocode-research` exist only inside theocode projects, with folder trust managed in the CLI's trust store.
 - Each request is forwarded verbatim to the upstream MCP endpoint with theocode's bearer token attached; on a 401 the proxy refreshes the token (single-flight, persisted back to the encrypted store) and retries once.
 - A provider that isn't connected returns a 503 telling the agent to finish setup in theocode.
 
@@ -57,10 +57,10 @@ and once its turn ends, unclaimed reports are delivered as an interrupt turn
 ## Agent
 
 `src/theocode/agent.ts` builds the headless grok invocation for a turn:
-connected MCP servers are written per-session to `mcp.json` pointing at the
-loopback proxy (never raw upstream tokens), and the system prompt is read
-from `prompts/system-prompt.md` (intentionally blank — Theo writes it).
-Spawning/streaming is not wired yet.
+`--session-id`/`--resume` for continuity, `--cwd` following the session's
+worktree once it has one, and `prompts/system-prompt.md` appended to grok's
+stock system prompt via `--rules`. `turn.ts` spawns it and coalesces the
+NDJSON stream into consolidated transcript events.
 
 ## Run
 
@@ -100,6 +100,6 @@ src/
     types.ts          workspace types + renderer API
   renderer/           app shell: sidebar tree, session pane, connections view
 scripts/dev.mjs       per-instance port/userData allocator + launcher
-prompts/system-prompt.md   agent system prompt (blank on purpose)
+prompts/               --rules appends: system-prompt.md, research-rules.md
 tests/proxy.test.ts   proxy unit tests (`bun test`)
 ```
