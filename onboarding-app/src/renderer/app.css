@@ -1313,3 +1313,83 @@ pre.tc-md code {
     transform: scaleY(0.6);
   }
 }
+
+/* --- Evidence tabs + viewer ---------------------------------------------- */
+
+/* Evidence tabs ride under their project, always carrying its accent. */
+.tc-tab-evidence {
+  font-size: var(--vbg-type-metadata);
+  max-width: 18ch;
+  border-bottom-color: var(--tc-project);
+  background: color-mix(in oklab, var(--tc-project) 14%, transparent);
+}
+
+.tc-tab-evidence:hover {
+  background: color-mix(in oklab, var(--tc-project) 26%, transparent);
+}
+
+.tc-tab-evidence[aria-current="true"] {
+  background: color-mix(in oklab, var(--tc-project) 38%, transparent);
+}
+
+.tc-evidence-close {
+  flex: none;
+  padding: 0 var(--vbg-space-1);
+  border-radius: var(--vbg-radius-small);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-evidence-close:hover {
+  color: var(--vbg-text-primary);
+}
+
+.tc-evidence-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.tc-evidence-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--vbg-space-4);
+  padding-bottom: var(--vbg-space-3);
+  border-bottom: 1px solid var(--vbg-border-subtle);
+}
+
+.tc-evidence-head > * {
+  margin: 0;
+}
+
+.tc-evidence-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  padding-top: var(--vbg-space-4);
+}
+
+.tc-evidence-web {
+  flex: 1;
+  border: 0;
+}
+
+.tc-evidence-img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  align-self: flex-start;
+}
+
+.tc-evidence-text {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  margin: 0;
+  font-family: var(--vbg-font-mono);
+  font-size: var(--vbg-type-metadata);
+  line-height: var(--vbg-leading-compact);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

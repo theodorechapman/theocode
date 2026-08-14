@@ -123,6 +123,8 @@ export interface WorkspaceApi {
   runSetup(projectId: string, answers: SetupAnswers): Promise<SessionRef>;
   /** Marks the setup prompt as shown (also implied by runSetup). */
   setupSeen(projectId: string): Promise<void>;
+  /** Bounded text read for the evidence viewer (2MB cap). */
+  readTextFile(path: string): Promise<{ ok: boolean; text?: string; error?: string }>;
   /** Persists speed-vs-reasoning for this session's next turn. */
   setReasoningEffort(
     ref: SessionRef,

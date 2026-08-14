@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, shell } from "electron";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { runOAuthFlow } from "./oauth";
 import { getProvider, GROK_CLIENT_ID, GROK_ISSUER } from "./providers";
 import {
@@ -431,6 +431,8 @@ function createWindow(): void {
       preload: join(app.getAppPath(), "dist", "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // Evidence tabs render URLs in <webview> guests.
+      webviewTag: true,
     },
   });
   win.loadFile(join(app.getAppPath(), "dist", "renderer", "index.html"));
@@ -932,6 +934,18 @@ ipcMain.handle(
     });
   },
 );
+
+// Evidence viewer: bounded text/JSON file reads for the renderer.
+ipcMain.handle("workspace:readFile", (_event, path: string) => {
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile()) return { ok: false, error: "not a file" };
+    if (stat.size > 2_000_000) return { ok: false, error: "file too large to preview (2MB cap)" };
+    return { ok: true, text: readFileSync(path, "utf8") };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
 
 // Fallback for List blocks whose tool result carried no listing text.
 ipcMain.handle("workspace:listDir", (_event, path: string): string[] => {

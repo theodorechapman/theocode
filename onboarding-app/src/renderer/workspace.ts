@@ -25,6 +25,81 @@ let activeTurnKeys = new Set<string>();
 let selected: SessionRef | null = null;
 /** The project whose tab is active; the sidebar lists its sessions. */
 let activeProjectId: string | null = null;
+
+// --- Evidence tabs: sanity-check links opened from transcripts ---------------
+
+interface EvidenceTab {
+  id: string;
+  projectId: string;
+  kind: "url" | "image" | "text";
+  /** URL for kind url; absolute file path otherwise. */
+  target: string;
+  title: string;
+}
+let evidenceTabs: EvidenceTab[] = [];
+let activeEvidenceId: string | null = null;
+
+function evidenceKindFor(path: string): "image" | "text" {
+  return /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(path) ? "image" : "text";
+}
+
+function evidenceTitle(kind: EvidenceTab["kind"], target: string): string {
+  if (kind === "url") {
+    try {
+      const u = new URL(target);
+      return u.host + (u.pathname === "/" ? "" : u.pathname);
+    } catch {
+      return target;
+    }
+  }
+  return target.split("/").pop() || target;
+}
+
+function sessionCwd(): string | undefined {
+  if (!selected) return undefined;
+  const { session, projectPath } = findMeta(selected);
+  return session?.worktree?.path ?? projectPath;
+}
+
+/** Opens (or refocuses) an evidence tab for a transcript link. */
+function openEvidence(href: string): void {
+  if (!selected) return;
+  let kind: EvidenceTab["kind"];
+  let target = href;
+  if (/^https?:\/\//i.test(href)) {
+    kind = "url";
+  } else {
+    if (target.startsWith("file://")) target = decodeURI(target.slice(7));
+    if (!target.startsWith("/")) {
+      const base = sessionCwd();
+      if (!base) return;
+      target = `${base}/${target}`.replace(/\/\.\//g, "/");
+    }
+    kind = evidenceKindFor(target);
+  }
+  const projectId = selected.projectId;
+  const existing = evidenceTabs.find(
+    (t) => t.projectId === projectId && t.target === target,
+  );
+  const tab = existing ?? {
+    id: `ev-${Date.now()}-${evidenceTabs.length}`,
+    projectId,
+    kind,
+    target,
+    title: evidenceTitle(kind, target),
+  };
+  if (!existing) evidenceTabs.push(tab);
+  activeEvidenceId = tab.id;
+  renderTabs();
+  renderPane();
+}
+
+function closeEvidence(id: string): void {
+  evidenceTabs = evidenceTabs.filter((t) => t.id !== id);
+  if (activeEvidenceId === id) activeEvidenceId = null;
+  renderTabs();
+  renderPane();
+}
 let events: SessionEvent[] = [];
 
 let tabsEl: HTMLElement;
@@ -168,6 +243,7 @@ function sameRef(a: SessionRef | null, b: SessionRef): boolean {
 
 async function select(ref: SessionRef | null): Promise<void> {
   selected = ref;
+  activeEvidenceId = null;
   if (ref) activeProjectId = ref.projectId;
   events = ref ? await api.getEvents(ref) : [];
   renderTabs();
@@ -229,12 +305,33 @@ function renderTabs(): void {
         renderTree();
       }
     });
-    return tab;
+    const group = [tab];
+    for (const ev of evidenceTabs.filter((t) => t.projectId === project.id)) {
+      const evTab = button("tc-tab tc-tab-evidence", "", () => {
+        activeProjectId = project.id;
+        activeEvidenceId = ev.id;
+        renderTabs();
+        renderPane();
+      });
+      evTab.dataset.tone = projectTone(project.id);
+      if (ev.id === activeEvidenceId) evTab.setAttribute("aria-current", "true");
+      const closeEl = h("span", "tc-evidence-close", "×");
+      closeEl.setAttribute("role", "button");
+      closeEl.setAttribute("aria-label", `Close ${ev.title}`);
+      closeEl.addEventListener("click", (e) => {
+        e.stopPropagation();
+        closeEvidence(ev.id);
+      });
+      evTab.append(h("span", "tc-tab-name", ev.title), closeEl);
+      evTab.title = ev.target;
+      group.push(evTab);
+    }
+    return group;
   });
   const add = button("tc-tab tc-tab-add", "+", () => void createProjectFlow());
   add.setAttribute("aria-label", "New project");
   add.title = "New project";
-  tabsEl.replaceChildren(...tabs, add);
+  tabsEl.replaceChildren(...tabs.flat(), add);
 }
 
 // --- Sidebar tree: the active project's sessions → subagent sessions --------
@@ -379,7 +476,53 @@ function patchSessionEffort(ref: SessionRef, effort: ReasoningEffort): void {
   }
 }
 
+function renderEvidencePane(tab: EvidenceTab): void {
+  const head = h(
+    "header",
+    "tc-evidence-head",
+    h("h1", "tc-pane-title", tab.title),
+    button("tc-quiet-button", "Open externally", () => {
+      window.open(tab.kind === "url" ? tab.target : `file://${tab.target}`);
+    }),
+  );
+  const body = h("div", "tc-evidence-body");
+  if (tab.kind === "url") {
+    const web = document.createElement("webview");
+    web.setAttribute("src", tab.target);
+    web.className = "tc-evidence-web";
+    body.append(web);
+  } else if (tab.kind === "image") {
+    const img = document.createElement("img");
+    img.src = `file://${tab.target}`;
+    img.className = "tc-evidence-img";
+    img.alt = tab.title;
+    body.append(img);
+  } else {
+    const pre = h("pre", "tc-evidence-text", "Loading…");
+    body.append(pre);
+    void api.readTextFile(tab.target).then((res) => {
+      if (!res.ok) {
+        pre.textContent = res.error ?? "Could not read file";
+        return;
+      }
+      let text = res.text ?? "";
+      try {
+        text = JSON.stringify(JSON.parse(text), null, 2);
+      } catch {
+        // Not JSON — show as-is.
+      }
+      pre.textContent = text;
+    });
+  }
+  paneEl.replaceChildren(h("div", "tc-pane tc-evidence-pane", head, body));
+}
+
 function renderPane(): void {
+  const evidence = evidenceTabs.find((t) => t.id === activeEvidenceId);
+  if (evidence) {
+    renderEvidencePane(evidence);
+    return;
+  }
   if (lenisRaf) cancelAnimationFrame(lenisRaf);
   lenis?.destroy();
   lenis = null;
@@ -588,6 +731,14 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
   treeEl = document.getElementById("tree")!;
   paneEl = container;
   paneEl.classList.add("tc-workspace-view");
+
+  // Transcript links become evidence tabs instead of leaving the app.
+  paneEl.addEventListener("click", (e) => {
+    const a = (e.target as HTMLElement).closest?.("a[href]");
+    if (!a || !paneEl.contains(a)) return;
+    e.preventDefault();
+    openEvidence(a.getAttribute("href")!);
+  });
 
   // Escape closes the effort slide-out first; otherwise it interrupts
   // the in-flight turn for the selected session.
