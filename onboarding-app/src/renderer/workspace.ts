@@ -457,6 +457,9 @@ function findMeta(ref: SessionRef): {
 
 function followStream(immediate = false): void {
   if (!transcriptEl || !lenis || !follow) return;
+  // Content just grew: refresh Lenis's cached dimensions first, or scrollTo
+  // clamps to the stale limit and the newest block stays below the fold.
+  lenis.resize();
   // Plain follow: glide toward the bottom as content streams. Forward-only,
   // so a reader who scrolled up is never dragged back down until they return.
   const target = transcriptEl.scrollHeight - transcriptEl.clientHeight;
