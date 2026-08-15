@@ -6,3 +6,5 @@ First-class sanity checking: end every substantive turn with evidence the user c
 - If your turn generated or processed a lot of data, plot the shape of it with matplotlib and link the image.
 
 Write evidence files under .theocode/evidence/ in your working directory. Put the links at the end of your response as a short "Evidence:" list of markdown links. Skip it only when the turn produced nothing checkable.
+
+For research, always use the theocode-research tool — never the built-in spawn_subagent (theocode tracks those sessions, keeps the exploration pure, and delivers the report back to you). For fanning out implementation work, use theocode-code.

@@ -63,6 +63,7 @@ import {
 import { getProject, updateProject } from "./theocode/sessions";
 import { detectStack, installSetupSkill, runProjectSetup } from "./theocode/setup";
 import { runAgentTurn, type TurnHandle, type TurnSinks } from "./theocode/turn";
+import { loadAsyncTasks, saveAsyncTasks } from "./theocode/asyncTasks";
 import { flushDb } from "./theocode/db";
 import { isReasoningEffort } from "./theocode/reasoning";
 import type { ReasoningEffort, SessionRef, SetupAnswers } from "./theocode/types";
@@ -303,7 +304,7 @@ async function startProxyAndSync(): Promise<void> {
               properties: {
                 question: {
                   type: "string",
-                  description: `The research question, stated plainly. Max ${MAX_QUESTION_CHARS} characters — no background, no hypotheses.`,
+                  description: `The research question, stated plainly, and include any hard requirements (size, license, format, acceptance criteria) — the researcher sees ONLY this field. Max ${MAX_QUESTION_CHARS} characters; no background, no hypotheses.`,
                 },
                 hypothesis: {
                   type: "string",
@@ -658,6 +659,7 @@ function finalizeResearch(taskId: string, code: number | null): void {
   if (!task) return;
   task.report = reportFromEvents(readEvents(task.subRef)) ?? undefined;
   task.status = code === 0 ? "done" : "failed";
+  saveAsyncTasks();
   if (task.parentRef) deliverPendingAsync(task.parentRef);
 }
 
@@ -666,6 +668,7 @@ function finalizeCodeTask(taskId: string, code: number | null): void {
   if (!task || !task.subRef) return;
   task.result = reportFromEvents(readEvents(task.subRef)) ?? undefined;
   task.status = code === 0 && task.result ? "done" : "failed";
+  saveAsyncTasks();
   // A slot freed up — start the next queued card for this coordinator.
   launchQueuedCodeTasks(task.parentRef);
   deliverPendingAsync(task.parentRef);
@@ -710,6 +713,7 @@ function deliverPendingAsync(parentRef: SessionRef): void {
   if (!startTurn(parentRef, parts.join("\n\n---\n\n"))) {
     for (const task of [...research, ...code]) task.claimed = false;
   }
+  saveAsyncTasks();
 }
 
 async function handleResearchStart(
@@ -778,6 +782,7 @@ function handleResearchPoll(
     return `Research ${id} is still running. Keep working and poll again later, or finish your turn and it will interrupt you.`;
   }
   task.claimed = true;
+  saveAsyncTasks();
   return resultText(task);
 }
 
@@ -851,6 +856,7 @@ async function handleCodeStart(
   const tasks = cards.map((card) =>
     newCodeTask(parentRef, mergeTarget, card, parallel),
   );
+  saveAsyncTasks();
   launchQueuedCodeTasks(parentRef);
   const launched = tasks.filter((t) => t.status === "running").length;
   return [
@@ -874,6 +880,7 @@ function handleCodePoll(
     return `Code task ${id} is ${task.status}${task.wtLabel ? ` in ${task.wtLabel}` : ""}. Keep working and poll again later, or finish your turn and it will interrupt you.`;
   }
   task.claimed = true;
+  saveAsyncTasks();
   return codeResultText(task);
 }
 
@@ -1154,6 +1161,24 @@ function runDemoTurn(): void {
 
 app.whenReady().then(async () => {
   setWorktreeScriptSource(join(app.getAppPath(), "resources", "worktree.sh"));
+  loadAsyncTasks();
+  saveAsyncTasks();
+  // Reports that finished before a restart still reach their coordinator:
+  // once the window is up, fire the normal idle-delivery for each parent
+  // with unclaimed results.
+  setTimeout(() => {
+    const parents = new Map<string, SessionRef>();
+    for (const t of [...researchTasks.values(), ...codeTasks.values()]) {
+      if ((t.status === "done" || t.status === "failed") && !t.claimed && t.parentRef) {
+        parents.set(turnKey(t.parentRef), t.parentRef);
+      }
+    }
+    for (const ref of parents.values()) {
+      if (getProject(ref.projectId) && readSession(ref)) {
+        deliverPendingAsync(ref);
+      }
+    }
+  }, 3000);
   if (process.env.THEOCODE_DEMO === "1") seedDemo();
   if (process.env.THEOCODE_DEMO_ACTIVE === "1") seedDemoActiveTurns();
   installSetupSkill();
@@ -1169,4 +1194,7 @@ app.on("activate", () => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
-app.on("before-quit", () => flushDb());
+app.on("before-quit", () => {
+  saveAsyncTasks();
+  flushDb();
+});
