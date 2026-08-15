@@ -109,4 +109,13 @@ export const mirror = {
       ),
     );
   },
+
+  eventsTruncated(sessionId: string, fromSeq: number): void {
+    enqueue((database) =>
+      database.run("DELETE FROM events WHERE session_id = ? AND seq >= ?", [
+        sessionId,
+        fromSeq,
+      ]),
+    );
+  },
 };

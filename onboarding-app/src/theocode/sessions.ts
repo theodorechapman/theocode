@@ -160,6 +160,29 @@ export function appendEvent(
   return event;
 }
 
+/**
+ * Rewind: drop every event with seq >= fromSeq, rewriting the jsonl in
+ * place. Returns the events that remain. The session title tracks the
+ * latest prompt, so it is re-derived from what survives.
+ */
+export function truncateEvents(ref: SessionRef, fromSeq: number): SessionEvent[] {
+  const dir = refDir(ref);
+  const kept = readEvents(ref).filter((event) => event.seq < fromSeq);
+  writeFileSync(
+    join(dir, "events.jsonl"),
+    kept.map((event) => JSON.stringify(event) + "\n").join(""),
+  );
+  const lastPrompt = kept
+    .filter((e) => e.type === "user_message" && typeof e.text === "string")
+    .at(-1);
+  updateSessionMeta(ref, {
+    updatedAt: new Date().toISOString(),
+    ...(lastPrompt ? { title: titleFromPrompt(String(lastPrompt.text)) } : {}),
+  });
+  mirror.eventsTruncated(ref.subagentId ?? ref.sessionId, fromSeq);
+  return kept;
+}
+
 /** Untitled sessions pick up the start of their latest prompt, lazily,
  *  when the tree is read (covers sessions from before titling existed). */
 function backfillTitle(ref: SessionRef, meta: SessionMeta): SessionMeta {

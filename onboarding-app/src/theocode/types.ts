@@ -102,6 +102,14 @@ export interface WorkspaceApi {
   sendMessage(ref: SessionRef, text: string): Promise<SessionEvent[]>;
   /** Kills the in-flight turn for this session, if any (Escape). */
   interruptTurn(ref: SessionRef): Promise<void>;
+  /** Rewinds to just before the user prompt at `seq`, optionally restoring
+   *  the workdir to that prompt's snapshot. Resolves the surviving events
+   *  and the dropped prompt's text (for re-editing in the composer). */
+  rewindTo(
+    ref: SessionRef,
+    seq: number,
+    restoreFiles: boolean,
+  ): Promise<{ events: SessionEvent[]; prompt: string }>;
   /** Directory entries ("name/" for dirs, dirs first), for List fallback
    *  when the tool result carried no listing text. */
   listDirectory(path: string): Promise<string[]>;
