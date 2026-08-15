@@ -256,6 +256,7 @@ export function runAgentTurn(
   // behind that async sync. Interrupting pre-spawn just cancels the start.
   let child: ChildProcess | null = null;
   let interrupted = false;
+  let retriedOrphan = false;
 
   const start = async () => {
   const wt = session.worktree;
@@ -479,6 +480,29 @@ export function runAgentTurn(
     if (partialTimer) clearTimeout(partialTimer);
     flushCur();
     for (const tool of [...tools.values()]) flushTool(tool);
+    // Orphaned first turn: a cut-off earlier attempt left grok's session
+    // directory behind without us learning its id, so --session-id is
+    // rejected. The session exists — adopt the id and resume it.
+    if (
+      code !== 0 &&
+      !interrupted &&
+      !retriedOrphan &&
+      !session.grokSessionId &&
+      /Session ID .* is already in use/i.test(stderrTail)
+    ) {
+      retriedOrphan = true;
+      updateSessionMeta(ref, { grokSessionId: session.id });
+      session.grokSessionId = session.id;
+      emit({
+        type: "notice",
+        text: "Recovered an orphaned grok session (an earlier turn was cut off before finishing) — resuming it.",
+      });
+      void start().catch(() => {
+        sinks.onPartial(ref, null);
+        sinks.onDone?.(null);
+      });
+      return;
+    }
     if (interrupted) {
       emit({ type: "notice", text: "Interrupted." });
     } else if (code !== 0) {
