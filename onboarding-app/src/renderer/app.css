@@ -1488,3 +1488,10 @@ pre.tc-md code {
   gap: var(--vbg-space-1);
   white-space: nowrap;
 }
+
+.tc-evidence-missing {
+  margin: 0;
+  font-size: 13px;
+  color: var(--vbg-text-secondary);
+  max-width: 60ch;
+}

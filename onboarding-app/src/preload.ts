@@ -53,6 +53,8 @@ const workspace: WorkspaceApi = {
     ipcRenderer.invoke("workspace:runSetup", projectId, answers),
   setupSeen: (projectId: string) =>
     ipcRenderer.invoke("workspace:setupSeen", projectId),
+  readImage: (path: string) =>
+    ipcRenderer.invoke("workspace:readImage", path),
   readTextFile: (path: string) =>
     ipcRenderer.invoke("workspace:readFile", path),
   setReasoningEffort: (ref: SessionRef, effort: ReasoningEffort) =>

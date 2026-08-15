@@ -499,10 +499,22 @@ function renderEvidencePane(tab: EvidenceTab): void {
     body.append(web);
   } else if (tab.kind === "image") {
     const img = document.createElement("img");
-    img.src = `file://${tab.target}`;
     img.className = "tc-evidence-img";
     img.alt = tab.title;
     body.append(img);
+    void api.readImage(tab.target).then((res) => {
+      if (res.ok && res.dataUrl) {
+        img.src = res.dataUrl;
+        return;
+      }
+      img.replaceWith(
+        h(
+          "p",
+          "tc-evidence-missing",
+          `Could not load image: ${tab.target} — ${res.error ?? "unknown error"}. Relative links resolve against the session's current worktree.`,
+        ),
+      );
+    });
   } else {
     const pre = h("pre", "tc-evidence-text", "Loading…");
     body.append(pre);

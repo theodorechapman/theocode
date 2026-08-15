@@ -1009,6 +1009,32 @@ ipcMain.handle(
   },
 );
 
+// Evidence viewer: arbitrary images come back as data: URLs so any on-disk
+// path renders regardless of origin/CSP/path-encoding quirks.
+const IMAGE_MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  bmp: "image/bmp",
+};
+
+ipcMain.handle("workspace:readImage", (_event, path: string) => {
+  try {
+    const stat = statSync(path);
+    if (!stat.isFile()) return { ok: false, error: "not a file" };
+    if (stat.size > 15_000_000) return { ok: false, error: "image too large to preview (15MB cap)" };
+    const ext = path.split(".").pop()?.toLowerCase() ?? "";
+    const mime = IMAGE_MIME[ext] ?? "image/png";
+    const data = readFileSync(path).toString("base64");
+    return { ok: true, dataUrl: `data:${mime};base64,${data}` };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+});
+
 // Evidence viewer: bounded text/JSON file reads for the renderer.
 ipcMain.handle("workspace:readFile", (_event, path: string) => {
   try {
