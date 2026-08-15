@@ -131,6 +131,8 @@ export interface WorkspaceApi {
   runSetup(projectId: string, answers: SetupAnswers): Promise<SessionRef>;
   /** Marks the setup prompt as shown (also implied by runSetup). */
   setupSeen(projectId: string): Promise<void>;
+  /** First existing file among candidate paths, or null. */
+  resolveFile(candidates: string[]): Promise<string | null>;
   /** Image read for the evidence viewer, as a data: URL (15MB cap). */
   readImage(
     path: string,

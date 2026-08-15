@@ -1021,6 +1021,19 @@ const IMAGE_MIME: Record<string, string> = {
   bmp: "image/bmp",
 };
 
+// First candidate path that exists — evidence links arrive relative to the
+// worktree, the project root, or absolute, and agents mix them freely.
+ipcMain.handle("workspace:resolveFile", (_event, candidates: string[]) => {
+  for (const path of candidates) {
+    try {
+      if (statSync(path).isFile()) return path;
+    } catch {
+      // Try the next candidate.
+    }
+  }
+  return null;
+});
+
 ipcMain.handle("workspace:readImage", (_event, path: string) => {
   try {
     const stat = statSync(path);

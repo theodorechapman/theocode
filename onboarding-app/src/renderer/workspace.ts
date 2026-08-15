@@ -62,7 +62,7 @@ function sessionCwd(): string | undefined {
 }
 
 /** Opens (or refocuses) an evidence tab for a transcript link. */
-function openEvidence(href: string): void {
+async function openEvidence(href: string): Promise<void> {
   if (!selected) return;
   let kind: EvidenceTab["kind"];
   let target = href;
@@ -71,9 +71,19 @@ function openEvidence(href: string): void {
   } else {
     if (target.startsWith("file://")) target = decodeURI(target.slice(7));
     if (!target.startsWith("/")) {
-      const base = sessionCwd();
-      if (!base) return;
-      target = `${base}/${target}`.replace(/\/\.\//g, "/");
+      // Agents link paths relative to their worktree OR the project root
+      // (and sometimes double one into the other) — probe candidates and
+      // take the first that actually exists.
+      const rel = target.replace(/^\.\//, "");
+      const cwd = sessionCwd();
+      const projectRoot = findMeta(selected).projectPath;
+      const candidates = [...new Set(
+        [cwd, projectRoot]
+          .filter((b): b is string => Boolean(b))
+          .map((b) => `${b}/${rel}`),
+      )];
+      if (candidates.length === 0) return;
+      target = (await api.resolveFile(candidates)) ?? candidates[0];
     }
     kind = evidenceKindFor(target);
   }
@@ -863,7 +873,7 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
     const a = (e.target as HTMLElement).closest?.("a[href]");
     if (!a || !paneEl.contains(a)) return;
     e.preventDefault();
-    openEvidence(a.getAttribute("href")!);
+    void openEvidence(a.getAttribute("href")!);
   });
 
   // Escape closes the effort slide-out first; with a turn running it
