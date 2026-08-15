@@ -2,3 +2,6 @@
 .claude/settings.local.json
 .grok/
 .worktrees/
+.theocode/
+.env*
+!.env.example
