@@ -55,6 +55,65 @@ interface ToolState {
 
 const PARTIAL_THROTTLE_MS = 80;
 
+// --- Combined turn diff (sanity-check evidence) ------------------------------
+
+function gitTry(cwd: string, args: string[]): string | null {
+  try {
+    return execFileSync("git", ["-C", cwd, ...args], {
+      encoding: "utf8",
+      maxBuffer: 8_000_000,
+    });
+  } catch {
+    return null;
+  }
+}
+
+interface GitState {
+  head: string;
+  working: string;
+}
+
+function captureGitState(cwd: string): GitState | null {
+  const head = gitTry(cwd, ["rev-parse", "HEAD"])?.trim();
+  if (!head) return null;
+  return { head, working: gitTry(cwd, ["diff", "HEAD"]) ?? "" };
+}
+
+/**
+ * The full diff a turn produced — commits made during the turn plus any new
+ * working-tree changes — written under .theocode/evidence/. Returns null when
+ * the turn changed nothing (the proper no-evidence scenario).
+ */
+function buildTurnDiff(
+  cwd: string,
+  pre: GitState | null,
+): { path: string; files: number } | null {
+  if (!pre) return null;
+  const postHead = gitTry(cwd, ["rev-parse", "HEAD"])?.trim();
+  const committed =
+    postHead && postHead !== pre.head
+      ? (gitTry(cwd, ["diff", `${pre.head}..${postHead}`]) ?? "")
+      : "";
+  const working = gitTry(cwd, ["diff", "HEAD"]) ?? "";
+  const workingChanged = working !== pre.working && working.trim().length > 0;
+  let combined = committed.trim();
+  if (workingChanged) {
+    combined += (combined ? "\n" : "") + working.trim();
+  }
+  if (!combined) return null;
+  const files = new Set(
+    [...combined.matchAll(/^diff --git a\/(\S+)/gm)].map((m) => m[1]),
+  ).size;
+  const dir = join(cwd, ".theocode", "evidence");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `turn-diff-${Date.now()}.patch`);
+  writeFileSync(
+    path,
+    `# combined diff for one theocode turn (commits during the turn + new working-tree changes)\n${combined}\n`,
+  );
+  return { path, files };
+}
+
 /** .grok/ carries the proxy secret and .theocode/ is per-machine state —
  *  neither belongs in the repo. */
 function ensureLocalDirsIgnored(projectPath: string): void {
@@ -211,6 +270,7 @@ export function runAgentTurn(
     return;
   }
   const invocation = buildAgentInvocation(project, session, prompt, opts);
+  const gitPre = captureGitState(invocation.cwd);
   const proc = spawn(grokTurnBinary(), invocation.args, {
     cwd: invocation.cwd,
     env: process.env,
@@ -363,11 +423,18 @@ export function runAgentTurn(
           session.grokSessionId = record.sessionId;
         }
         const usage = record.usage as { total_tokens?: number } | undefined;
+        let diff: { path: string; files: number } | null = null;
+        try {
+          diff = buildTurnDiff(invocation.cwd, gitPre);
+        } catch {
+          // Evidence is best-effort; the turn footer stands without it.
+        }
         emit({
           type: "turn_end",
           stopReason: record.stopReason,
           totalTokens: usage?.total_tokens,
           costUsd: record.total_cost_usd,
+          ...(diff ? { diffPath: diff.path, diffFiles: diff.files } : {}),
         });
         break;
       }

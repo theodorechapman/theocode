@@ -1393,3 +1393,51 @@ pre.tc-md code {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* --- Diff rendering (edit tools + .patch evidence) ------------------------ */
+
+.tc-diff {
+  font-family: var(--vbg-font-mono);
+  font-size: var(--vbg-type-metadata);
+  line-height: var(--vbg-leading-compact);
+  border: 1px solid var(--vbg-border-subtle);
+  border-radius: var(--vbg-radius-small);
+  overflow-x: auto;
+  padding: var(--vbg-space-2) 0;
+}
+
+.tc-diff-line {
+  padding: 0 var(--vbg-space-3);
+  white-space: pre;
+}
+
+.tc-diff-add {
+  color: light-dark(oklch(45% 0.12 148), oklch(80% 0.12 148));
+  background: color-mix(in oklab, oklch(70% 0.15 148) 12%, transparent);
+}
+
+.tc-diff-del {
+  color: light-dark(oklch(48% 0.15 22), oklch(78% 0.12 22));
+  background: color-mix(in oklab, oklch(65% 0.18 22) 12%, transparent);
+}
+
+.tc-diff-ctx {
+  color: var(--vbg-text-secondary);
+}
+
+.tc-diff-clip {
+  margin-top: var(--vbg-space-1);
+}
+
+.tc-diff-clipped {
+  max-height: calc(14 * 1.5em);
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+}
+
+.tc-turn-diff-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}

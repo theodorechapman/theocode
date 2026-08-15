@@ -2,7 +2,7 @@ import Lenis from "lenis";
 import { button, h } from "./dom";
 import { type EffortControl, mountEffortControl } from "./effort";
 import { showSetupDialog } from "./setup";
-import { eventBlock, isWatchedTool, PartialView } from "./transcript";
+import { eventBlock, PartialView, unifiedDiffEl } from "./transcript";
 import type { ReasoningEffort } from "../theocode/reasoning";
 import type {
   SessionEvent,
@@ -215,13 +215,7 @@ function syncComposerRipple(): void {
 //    the scroll stops there, without pinning the reader to it.
 let lenis: Lenis | null = null;
 let lenisRaf = 0;
-let turnAnchorEl: HTMLElement | null = null;
-let anchorKind: "message" | "tool" | null = null;
-let holdUntil = 0;
-let watchKey: string | null = null;
 let follow = true;
-
-const TOOL_HOLD_MS = 2000;
 
 // Event types whose arrival means the matching streamed partial just flushed.
 const FLUSH_TYPES = new Set([
@@ -439,24 +433,11 @@ function findMeta(ref: SessionRef): {
   };
 }
 
-function scrollTarget(): number {
-  if (!transcriptEl) return 0;
-  const bottom = transcriptEl.scrollHeight - transcriptEl.clientHeight;
-  if (!turnAnchorEl?.isConnected) return bottom;
-  return Math.min(bottom, Math.max(0, turnAnchorEl.offsetTop - 8));
-}
-
 function followStream(immediate = false): void {
   if (!transcriptEl || !lenis || !follow) return;
-  // A tool hold that has run its course releases back to bottom-following.
-  if (anchorKind === "tool" && performance.now() >= holdUntil) {
-    turnAnchorEl = null;
-    anchorKind = null;
-    watchKey = null;
-  }
-  const target = scrollTarget();
-  // Forward-only: glide down toward the stop line, never drag the reader
-  // back up to it — the scroll stops there, it doesn't pin there.
+  // Plain follow: glide toward the bottom as content streams. Forward-only,
+  // so a reader who scrolled up is never dragged back down until they return.
+  const target = transcriptEl.scrollHeight - transcriptEl.clientHeight;
   if (target > transcriptEl.scrollTop + 1) {
     lenis.scrollTo(target, immediate ? { immediate: true } : { duration: 0.5 });
   }
@@ -505,13 +486,16 @@ function renderEvidencePane(tab: EvidenceTab): void {
         pre.textContent = res.error ?? "Could not read file";
         return;
       }
-      let text = res.text ?? "";
-      try {
-        text = JSON.stringify(JSON.parse(text), null, 2);
-      } catch {
-        // Not JSON — show as-is.
+      const text = res.text ?? "";
+      if (/\.(patch|diff)$/i.test(tab.target)) {
+        pre.replaceWith(unifiedDiffEl(text));
+        return;
       }
-      pre.textContent = text;
+      try {
+        pre.textContent = JSON.stringify(JSON.parse(text), null, 2);
+      } catch {
+        pre.textContent = text;
+      }
     });
   }
   paneEl.replaceChildren(h("div", "tc-pane tc-evidence-pane", head, body));
@@ -532,10 +516,6 @@ function renderPane(): void {
   composerRipple = null;
   partialView = null;
   partialHadText = false;
-  turnAnchorEl = null;
-  anchorKind = null;
-  holdUntil = 0;
-  watchKey = null;
   follow = true;
   effortUi?.destroy();
   effortUi = null;
@@ -632,14 +612,6 @@ function renderPane(): void {
     for (const e of events) {
       if (research && isResearchPrompt(e)) continue;
       const block = eventBlock(e, false, selectedProjectPath);
-      // Historical load: land anchored on the last significant block.
-      if (e.type === "agent_message") {
-        turnAnchorEl = block;
-        anchorKind = "message";
-      } else if (e.type === "tool_call" || e.type === "user_message") {
-        turnAnchorEl = null;
-        anchorKind = null;
-      }
       // Sequential Reads collapse into the same line in history too.
       const last = contentEl.lastElementChild;
       if (
@@ -666,7 +638,11 @@ function renderPane(): void {
     "wheel",
     (e) => {
       if (e.deltaY < 0) follow = false;
-      else if (transcriptEl && transcriptEl.scrollTop >= scrollTarget() - 60) {
+      else if (
+        transcriptEl &&
+        transcriptEl.scrollTop >=
+          transcriptEl.scrollHeight - transcriptEl.clientHeight - 60
+      ) {
         follow = true;
       }
     },
@@ -683,7 +659,9 @@ function renderPane(): void {
       const text = input.value.trim();
       if (!text || !selected) return;
       input.value = "";
+      follow = true;
       await api.sendMessage(selected, text);
+      followStream(true);
       // The session takes its title from the latest prompt — refresh the
       // sidebar and patch the header in place (no pane rebuild mid-turn).
       tree = await api.getTree();
@@ -781,38 +759,11 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
       contentEl.insertBefore(block, partialView.el);
     }
     if (event.type === "user_message") {
-      // A new turn: follow the bottom until there is something to hold on.
-      turnAnchorEl = null;
-      anchorKind = null;
-      watchKey = null;
+      // A new prompt always comes into view, even if the reader had roamed.
       follow = true;
-    } else if (event.type === "agent_message") {
-      turnAnchorEl = block;
-      anchorKind = "message";
-      watchKey = null;
-    } else if (event.type === "tool_call") {
-      const watched = isWatchedTool(
-        String(event.toolName ?? ""),
-        typeof event.kind === "string" ? event.kind : undefined,
-        typeof event.command === "string" ? event.command : undefined,
-      );
-      if (watched) {
-        // Its streamed partial (same key) may already be mid-hold; a
-        // watched call arriving cold gets the full 2s on its output.
-        const key = String(event.command ?? event.toolCallId ?? event.seq);
-        turnAnchorEl = block;
-        anchorKind = "tool";
-        if (key !== watchKey) {
-          watchKey = key;
-          holdUntil = performance.now() + TOOL_HOLD_MS;
-        }
-      } else {
-        turnAnchorEl = null;
-        anchorKind = null;
-        watchKey = null;
-      }
+      followStream(true);
+      return;
     }
-    // thought / turn_end / notice keep the current stop line in place.
     followStream();
   });
 
@@ -831,29 +782,6 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
     if (!sameRef(selected, ref) || !partialView) return;
     partialHadText = Boolean(partial?.text);
     partialView.update(partial);
-    if (partial?.text) {
-      turnAnchorEl = partialView.textEl();
-      anchorKind = "message";
-      watchKey = null;
-    } else if (partial?.tool) {
-      const toolEl = partialView.watchedToolEl();
-      if (toolEl) {
-        // A shell/python/edit call: hold the scroll on it for 2 seconds.
-        const key = partial.tool.command ?? partial.tool.toolName;
-        turnAnchorEl = toolEl;
-        anchorKind = "tool";
-        if (key !== watchKey) {
-          watchKey = key;
-          holdUntil = performance.now() + TOOL_HOLD_MS;
-        }
-      } else {
-        turnAnchorEl = null;
-        anchorKind = null;
-        watchKey = null;
-      }
-    }
-    // Thought-only partials keep the current stop line (thinking is pinned
-    // above the composer and adds nothing to the transcript).
     followStream();
   });
 

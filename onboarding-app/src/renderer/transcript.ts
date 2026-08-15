@@ -241,6 +241,81 @@ interface ToolBlockOpts {
   basePath?: string;
 }
 
+// --- Diff rendering ---------------------------------------------------------
+
+function isEditTool(toolName: string, kind?: string): boolean {
+  return (
+    kind === "edit" || /edit|search_replace|patch|write_file|create_file/i.test(toolName)
+  );
+}
+
+/** LCS line diff for old/new edit pairs; capped so huge edits stay cheap. */
+function lineDiff(oldText: string, newText: string): Array<["-" | "+" | " ", string]> {
+  const a = oldText.split("\n");
+  const b = newText.split("\n");
+  if (a.length * b.length > 250_000) {
+    return [...a.map((l) => ["-", l] as ["-", string]), ...b.map((l) => ["+", l] as ["+", string])];
+  }
+  const m = a.length, n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const out: Array<["-" | "+" | " ", string]> = [];
+  let i = 0, j = 0;
+  while (i < m && j < n) {
+    if (a[i] === b[j]) { out.push([" ", a[i]]); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push(["-", a[i]]); i++; }
+    else { out.push(["+", b[j]]); j++; }
+  }
+  while (i < m) { out.push(["-", a[i]]); i++; }
+  while (j < n) { out.push(["+", b[j]]); j++; }
+  return out;
+}
+
+export function diffLinesEl(rows: Array<["-" | "+" | " ", string]>): HTMLElement {
+  const box = h("div", "tc-diff");
+  for (const [op, text] of rows) {
+    const cls = op === "+" ? "tc-diff-add" : op === "-" ? "tc-diff-del" : "tc-diff-ctx";
+    box.append(h("div", `tc-diff-line ${cls}`, `${op === " " ? " " : op} ${text}`));
+  }
+  return box;
+}
+
+/** Colorize a unified-diff string (+/-/@@ prefixes). */
+export function unifiedDiffEl(patch: string): HTMLElement {
+  const rows = patch.split("\n").map((line): ["-" | "+" | " ", string] => {
+    if (line.startsWith("+") && !line.startsWith("+++")) return ["+", line.slice(1)];
+    if (line.startsWith("-") && !line.startsWith("---")) return ["-", line.slice(1)];
+    return [" ", line];
+  });
+  return diffLinesEl(rows);
+}
+
+/** Pretty diff for an edit tool, from whatever shape its input carries. */
+function editDiffEl(input: unknown): HTMLElement | null {
+  if (!input || typeof input !== "object") return null;
+  const raw = input as Record<string, unknown>;
+  const patch = raw.patch ?? raw.diff;
+  if (typeof patch === "string" && patch.trim()) return unifiedDiffEl(patch);
+  const oldText = raw.old_string ?? raw.old_str ?? raw.search ?? raw.oldText;
+  const newText = raw.new_string ?? raw.new_str ?? raw.replace ?? raw.newText;
+  if (typeof newText === "string" && typeof oldText === "string") {
+    return diffLinesEl(lineDiff(oldText, newText));
+  }
+  if (typeof newText === "string") {
+    return diffLinesEl(newText.split("\n").map((l) => ["+", l]));
+  }
+  // write/create with full content: everything is an addition.
+  const content = raw.content ?? raw.contents ?? raw.text;
+  if (typeof content === "string" && content.trim()) {
+    return diffLinesEl(content.split("\n").map((l) => ["+", l]));
+  }
+  return null;
+}
+
 function toolBlock(opts: ToolBlockOpts): HTMLElement {
   const { toolName, command, input, output, status, exitCode, animate } = opts;
   const statusText =
@@ -294,6 +369,34 @@ function toolBlock(opts: ToolBlockOpts): HTMLElement {
       });
     }
     return block;
+  }
+
+  // Edits render as a pretty diff with the target path in the header.
+  if (isEditTool(toolName, opts.kind)) {
+    const diff = editDiffEl(input);
+    if (diff) {
+      const path = inputPath(input);
+      const head = h(
+        "p",
+        "tc-tool-head",
+        h("span", "tc-tool-name", prettyToolName(toolName)),
+        ...(path
+          ? [h("span", "tc-tool-path", relativePath(path, opts.basePath))]
+          : []),
+        ...statusEl,
+      );
+      const wrap = h("div", "tc-diff-clip", diff);
+      const lines = diff.childElementCount;
+      if (lines > 14) {
+        wrap.classList.add("tc-diff-clipped");
+        wrap.title = "Click to expand";
+        wrap.addEventListener("click", () => {
+          wrap.classList.toggle("tc-diff-clipped");
+          wrap.title = wrap.classList.contains("tc-diff-clipped") ? "Click to expand" : "";
+        });
+      }
+      return fade(h("article", "tc-tool tc-tool-edit", head, wrap), animate);
+    }
   }
 
   const head = h(
@@ -370,12 +473,22 @@ export function eventBlock(
           : null;
       const cost =
         typeof rest.costUsd === "number" ? `$${rest.costUsd.toFixed(3)}` : null;
-      return metaLine(
+      const line = metaLine(
         ["turn finished", rest.stopReason, tokens, cost]
           .filter(Boolean)
           .join(" · "),
         animate,
       );
+      // Sanity check: when the turn changed files, its full combined diff is
+      // one click away (opens as an evidence tab).
+      if (typeof rest.diffPath === "string" && rest.diffPath) {
+        const a = h("a", "tc-turn-diff-link") as HTMLAnchorElement;
+        a.href = rest.diffPath;
+        const files = typeof rest.diffFiles === "number" ? rest.diffFiles : 0;
+        a.textContent = `combined diff${files ? ` (${files} file${files === 1 ? "" : "s"})` : ""}`;
+        line.append(" · ", a);
+      }
+      return line;
     }
     case "notice":
       return metaLine(String(rest.text ?? ""), animate);
