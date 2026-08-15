@@ -2,7 +2,13 @@ import Lenis from "lenis";
 import { button, h } from "./dom";
 import { type EffortControl, mountEffortControl } from "./effort";
 import { showSetupDialog } from "./setup";
-import { eventBlock, PartialView, unifiedDiffEl } from "./transcript";
+import {
+  eventBlock,
+  parseTodos,
+  PartialView,
+  unifiedDiffEl,
+  type TodoItem,
+} from "./transcript";
 import type { ReasoningEffort } from "../theocode/reasoning";
 import type {
   SessionEvent,
@@ -122,6 +128,51 @@ let partialHadText = false;
 let selectedProjectPath: string | undefined;
 let composerRipple: HTMLElement | null = null;
 let effortUi: EffortControl | null = null;
+let todoStripEl: HTMLElement | null = null;
+
+// --- Pinned plan: the latest todo_write state, above the prompt box ----------
+
+function isTodoToolEvent(e: SessionEvent): boolean {
+  return (
+    e.type === "tool_call" && /^todo_write$/i.test(String(e.toolName ?? ""))
+  );
+}
+
+function latestTodos(list: SessionEvent[]): TodoItem[] {
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (isTodoToolEvent(list[i])) return parseTodos(list[i].input);
+  }
+  return [];
+}
+
+const STRIP_GLYPH: Record<TodoItem["status"], string> = {
+  pending: "○",
+  in_progress: "◐",
+  completed: "●",
+};
+
+function renderTodoStrip(): void {
+  if (!todoStripEl) return;
+  const items = latestTodos(events);
+  if (items.length === 0) {
+    todoStripEl.replaceChildren();
+    todoStripEl.hidden = true;
+    return;
+  }
+  todoStripEl.hidden = false;
+  const done = items.filter((i) => i.status === "completed").length;
+  todoStripEl.replaceChildren(
+    h("span", "tc-todo-strip-label", `Plan ${done}/${items.length}`),
+    ...items.map((item) =>
+      h(
+        "span",
+        `tc-todo-chip tc-todo-${item.status}`,
+        h("span", "tc-todo-glyph", STRIP_GLYPH[item.status]),
+        h("span", "tc-todo-chip-text", item.text),
+      ),
+    ),
+  );
+}
 
 // --- Rewind mode ------------------------------------------------------------
 //
@@ -648,6 +699,8 @@ function renderPane(): void {
 
   // Thinking stays pinned above the composer, outside the scroll flow.
   const thinkingStrip = h("div", "tc-thinking-strip");
+  todoStripEl = h("div", "tc-todo-strip");
+  todoStripEl.hidden = true;
   partialView = new PartialView(selectedProjectPath, thinkingStrip);
   transcriptEl = h("div", "tc-transcript");
   contentEl = h("div", "tc-transcript-inner");
@@ -758,6 +811,7 @@ function renderPane(): void {
       header,
       ...(banner ? [banner] : []),
       transcriptEl,
+      todoStripEl,
       thinkingStrip,
       ...(composer ? [composer] : []),
     ),
@@ -933,6 +987,7 @@ export async function initWorkspace(container: HTMLElement): Promise<void> {
     if (isResearch(findMeta(ref).session) && isResearchPrompt(event)) return;
     if (!contentEl || !partialView) return;
     contentEl.querySelector(".tc-placeholder")?.remove();
+    if (isTodoToolEvent(event)) renderTodoStrip();
     // A flushed message replaces its streamed partial; paragraphs that were
     // already visible while streaming keep still, only later ones fade in.
     const fadeFrom =

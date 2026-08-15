@@ -1440,6 +1440,7 @@ pre.tc-md code {
   color: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
 
 /* --- Rewind mode ------------------------------------------------------------
    Double-Esc when idle: pick a past prompt, everything from it on dims (it
@@ -1494,4 +1495,98 @@ pre.tc-md code {
   font-size: 13px;
   color: var(--vbg-text-secondary);
   max-width: 60ch;
+}
+
+/* --- Plans: checklist in the transcript, pinned strip above the composer -- */
+
+.tc-todos {
+  list-style: none;
+  margin: var(--vbg-space-3) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-2);
+}
+
+.tc-todo {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  column-gap: var(--vbg-space-2);
+  align-items: baseline;
+  font-size: var(--vbg-type-compact);
+  line-height: var(--vbg-leading-compact);
+}
+
+.tc-todo-glyph { font-size: 10px; text-align: center; }
+.tc-todo-in_progress .tc-todo-glyph { color: var(--vbg-color-info); }
+.tc-todo-completed { color: var(--vbg-text-secondary); }
+.tc-todo-completed .tc-todo-text { text-decoration: line-through; text-decoration-thickness: 1px; }
+
+.tc-todo-strip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--vbg-space-2);
+  flex-wrap: wrap;
+  padding: var(--vbg-space-3) 0;
+  border-top: 1px solid var(--vbg-border-subtle);
+  font-size: var(--vbg-type-metadata);
+}
+
+.tc-todo-strip[hidden] { display: none; }
+
+.tc-todo-strip-label {
+  font-weight: var(--vbg-weight-medium);
+  color: var(--vbg-text-secondary);
+  white-space: nowrap;
+}
+
+.tc-todo-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: baseline;
+  max-width: 34ch;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--vbg-gray-alpha-100);
+}
+
+.tc-todo-strip-label {
+  margin-right: var(--vbg-space-2);
+}
+
+.tc-todo-chip .tc-todo-chip-text { overflow: hidden; text-overflow: ellipsis; }
+
+/* Key/value input rows — structured tool inputs without raw JSON. */
+.tc-kv {
+  margin-top: var(--vbg-space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--vbg-space-1);
+}
+
+.tc-kv-row {
+  display: grid;
+  grid-template-columns: minmax(110px, max-content) minmax(0, 1fr);
+  column-gap: var(--vbg-space-4);
+  font-size: var(--vbg-type-metadata);
+  line-height: var(--vbg-leading-compact);
+}
+
+.tc-kv-key {
+  font-family: var(--vbg-font-mono);
+  color: var(--vbg-text-secondary);
+}
+
+.tc-kv-val {
+  overflow-wrap: anywhere;
+}
+
+.tc-tool-where {
+  color: var(--vbg-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

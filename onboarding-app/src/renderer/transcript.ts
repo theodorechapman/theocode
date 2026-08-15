@@ -316,8 +316,123 @@ function editDiffEl(input: unknown): HTMLElement | null {
   return null;
 }
 
+// --- Tool-specific renderings (no raw JSON for anything grok emits) ---------
+
+/** Some records carry a display title ("Web search: …") as the tool name. */
+function normalizeToolName(toolName: string): string {
+  const t = toolName.trim();
+  if (/^web search\b/i.test(t)) return "web_search";
+  if (/^fetch\b|^web fetch\b/i.test(t)) return "web_fetch";
+  return t.replace(/:$/, "");
+}
+
+function isSearchLike(toolName: string): boolean {
+  return /^(grep|search_file_content|search|web_search|search_tool|glob|find_files|codebase_search)$/i.test(
+    toolName,
+  );
+}
+
+function firstString(input: unknown, keys: string[]): string | null {
+  if (!input || typeof input !== "object") return null;
+  const raw = input as Record<string, unknown>;
+  for (const key of keys) {
+    const v = raw[key];
+    if (typeof v === "string" && v.trim()) return v;
+  }
+  return null;
+}
+
+export interface TodoItem {
+  text: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+/** Flexible todo_write input parsing ({todos|items|tasks|plan}, varied field names). */
+export function parseTodos(input: unknown): TodoItem[] {
+  if (!input || typeof input !== "object") return [];
+  const raw = input as Record<string, unknown>;
+  const list = Array.isArray(input)
+    ? input
+    : (raw.todos ?? raw.items ?? raw.tasks ?? raw.plan);
+  if (!Array.isArray(list)) return [];
+  const items: TodoItem[] = [];
+  for (const entry of list) {
+    if (typeof entry === "string") {
+      items.push({ text: entry, status: "pending" });
+      continue;
+    }
+    if (!entry || typeof entry !== "object") continue;
+    const e = entry as Record<string, unknown>;
+    const text = firstString(e, ["content", "task", "title", "text", "description"]);
+    if (!text) continue;
+    const st = String(e.status ?? e.state ?? "pending").toLowerCase();
+    const status: TodoItem["status"] =
+      /done|complete/.test(st) ? "completed" : /progress|active|doing/.test(st) ? "in_progress" : "pending";
+    items.push({ text, status });
+  }
+  return items;
+}
+
+const TODO_GLYPH: Record<TodoItem["status"], string> = {
+  pending: "○",
+  in_progress: "◐",
+  completed: "●",
+};
+
+function todoListEl(items: TodoItem[]): HTMLElement {
+  const list = h("ul", "tc-todos");
+  for (const item of items) {
+    const li = h(
+      "li",
+      `tc-todo tc-todo-${item.status}`,
+      h("span", "tc-todo-glyph", TODO_GLYPH[item.status]),
+      h("span", "tc-todo-text", item.text),
+    );
+    list.append(li);
+  }
+  return list;
+}
+
+/** Key/value rows for any structured input — never raw JSON braces. */
+function kvRows(input: unknown): HTMLElement | null {
+  if (!input || typeof input !== "object") return null;
+  const entries = Object.entries(input as Record<string, unknown>).filter(
+    ([, v]) => v !== undefined && v !== null && v !== "",
+  );
+  if (entries.length === 0) return null;
+  const box = h("div", "tc-kv");
+  for (const [key, value] of entries) {
+    const text =
+      typeof value === "string"
+        ? value
+        : Array.isArray(value)
+          ? value.map((v) => (typeof v === "string" ? v : JSON.stringify(v))).join(", ")
+          : JSON.stringify(value);
+    box.append(
+      h(
+        "div",
+        "tc-kv-row",
+        h("span", "tc-kv-key", key),
+        h("span", "tc-kv-val", text.length > 400 ? `${text.slice(0, 397)}…` : text),
+      ),
+    );
+  }
+  return box;
+}
+
 function toolBlock(opts: ToolBlockOpts): HTMLElement {
-  const { toolName, command, input, output, status, exitCode, animate } = opts;
+  let { toolName, input } = opts;
+  const { command, output, status, exitCode, animate } = opts;
+  toolName = normalizeToolName(toolName);
+  // use_tool wraps an MCP call: render the inner tool as the tool.
+  if (/^use_tool$/i.test(toolName) && input && typeof input === "object") {
+    const raw = input as Record<string, unknown>;
+    const inner = firstString(raw, ["tool_name", "tool", "name"]);
+    if (inner) {
+      toolName = inner.split("__").pop() ?? inner;
+      input = (raw.tool_input ?? raw.arguments ?? raw.args ?? {}) as Record<string, unknown>;
+    }
+  }
   const statusText =
     status === "completed"
       ? typeof exitCode === "number" && exitCode !== 0
@@ -341,6 +456,63 @@ function toolBlock(opts: ToolBlockOpts): HTMLElement {
       ...statusEl,
     );
     return fade(h("article", "tc-tool tc-tool-read", head), animate);
+  }
+
+  // Searches read like Read: one line with the query, plus a match count.
+  if (isSearchLike(toolName)) {
+    const query = firstString(input, ["pattern", "query", "q", "regex", "search", "glob"]);
+    const where = inputPath(input);
+    const matches = output?.trim() ? output.trim().split("\n").length : 0;
+    const head = h(
+      "p",
+      "tc-tool-head",
+      h("span", "tc-tool-name", prettyToolName(toolName)),
+      ...(query ? [h("span", "tc-tool-path", query)] : []),
+      ...(where ? [h("span", "tc-tool-where", relativePath(where, opts.basePath))] : []),
+      ...(matches > 0 ? [h("span", "tc-tool-status", `${matches} line${matches === 1 ? "" : "s"}`)] : []),
+      ...statusEl,
+    );
+    return fade(h("article", "tc-tool tc-tool-read", head), animate);
+  }
+
+  // Fetches read like Read too: one line with the URL.
+  if (/^web_fetch$/i.test(toolName)) {
+    const url = firstString(input, ["url", "uri", "link"]);
+    const head = h(
+      "p",
+      "tc-tool-head",
+      h("span", "tc-tool-name", "Fetch page"),
+      ...(url ? [h("span", "tc-tool-path", url)] : []),
+      ...statusEl,
+    );
+    return fade(h("article", "tc-tool tc-tool-read", head), animate);
+  }
+
+  // Subagent spawn: one line with the task snippet.
+  if (/^(spawn_subagent|task)$/i.test(toolName)) {
+    const task = firstString(input, ["task", "prompt", "description", "instructions"]);
+    const head = h(
+      "p",
+      "tc-tool-head",
+      h("span", "tc-tool-name", "Subagent"),
+      ...(task ? [h("span", "tc-tool-path", task.length > 90 ? `${task.slice(0, 87)}…` : task)] : []),
+      ...statusEl,
+    );
+    return fade(h("article", "tc-tool tc-tool-read", head), animate);
+  }
+
+  // Plans render as a checklist (also pinned above the composer).
+  if (/^todo_write$/i.test(toolName)) {
+    const items = parseTodos(input);
+    const head = h(
+      "p",
+      "tc-tool-head",
+      h("span", "tc-tool-name", "Plan"),
+      ...statusEl,
+    );
+    const block = fade(h("article", "tc-tool", head), animate);
+    if (items.length > 0) block.append(todoListEl(items));
+    return block;
   }
 
   // list_directory renders as a little file tree.
@@ -408,8 +580,9 @@ function toolBlock(opts: ToolBlockOpts): HTMLElement {
   const block = fade(h("article", "tc-tool", head), animate);
   if (command) {
     block.append(clampable("tc-tool-cmd", command, highlightBash(command)));
-  } else if (input && Object.keys(input as object).length > 0) {
-    block.append(clampable("tc-tool-cmd", JSON.stringify(input, null, 2)));
+  } else {
+    const rows = kvRows(input);
+    if (rows) block.append(rows);
   }
   if (output?.trim()) block.append(clampable("tc-tool-out", output.trimEnd()));
   return block;
